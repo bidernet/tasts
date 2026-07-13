@@ -1,0 +1,11 @@
+# פרטי מסד הנתונים — לעולם לא ב-Git
+config.php
+
+# קבצים שהועלו על ידי המשתמשים
+uploads/*
+!uploads/.htaccess
+!uploads/.gitkeep
+
+.DS_Store
+Thumbs.db
+*.log
