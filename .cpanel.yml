@@ -3,3 +3,4 @@ deployment:
   tasks:
     - export DEPLOYPATH=/home/biderne1/public_html/tasks.bidernet.co.il
     - /usr/bin/rsync -a --exclude='.git' --exclude='.gitignore' --exclude='.cpanel.yml' --exclude='config.php' --exclude='uploads/' --exclude='.htaccess' ./ "$DEPLOYPATH/"
+    /bin/chmod 755 "$DEPLOYPATH"
