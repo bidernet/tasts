@@ -15,7 +15,7 @@ $APP_URL   = 'https://tasks.bidernet.co.il';
 $MAIL_FROM = 'no-reply@bidernet.co.il';
 
 // עוגיית הסשן: קיימת רק בשרת, לא נגישה ל-JS
-define('APP_VERSION', '1.0.3');
+define('APP_VERSION', '1.0.5');
 
 session_set_cookie_params([
     'lifetime' => 0,
@@ -131,7 +131,16 @@ try {
 
     // ---------- בדיקת חיים ----------
     case 'ping':
-        respond(['ok' => true, 'version' => APP_VERSION, 'time' => date('c')]);
+        $charset = $pdo->query("SELECT @@character_set_database AS db, @@collation_database AS coll")->fetch();
+        $sample  = $pdo->query("SELECT name FROM users WHERE username = 'admin'")->fetchColumn();
+        respond([
+            'ok'      => true,
+            'version' => APP_VERSION,
+            'time'    => date('c'),
+            'db'      => $charset,             // חייב להיות utf8mb4
+            'hebrew'  => 'בדיקת עברית תקינה',  // אם זה מגיע שבור — הבעיה בשרת
+            'admin'   => $sample,              // אם זה ???? — הנתון עצמו פגום במסד
+        ]);
 
     // ---------- התחברות ----------
     case 'login':
@@ -179,7 +188,16 @@ try {
         respond($u);
 
     case 'me':
-        respond(me() ?: ['guest' => true]);
+        $cur = me();
+        if (!$cur) respond(['guest' => true]);
+        // רענון מהמסד — כדי שעדכון שם/צבע/טלפון ישתקף מיד, בלי התנתקות
+        $q = $pdo->prepare("SELECT * FROM users WHERE id = ? AND active = 1");
+        $q->execute([$cur['id']]);
+        $fresh = $q->fetch();
+        if (!$fresh) { $_SESSION = []; session_destroy(); respond(['guest' => true]); }
+        unset($fresh['password']);
+        $_SESSION['user'] = $fresh;
+        respond($fresh);
 
     case 'logout':
         if (!empty($_COOKIE['bidernet_remember'])) {
@@ -293,6 +311,15 @@ try {
                 $input['color'] ?? '#013d19',
                 $input['businessName'] ?? null,
             ]);
+
+            // אם המשתמש עדכן את עצמו — לרענן את הסשן, אחרת הברכה תישאר ישנה
+            if ($id === ($u['id'] ?? '')) {
+                $q = $pdo->prepare("SELECT * FROM users WHERE id = ?");
+                $q->execute([$id]);
+                $fresh = $q->fetch();
+                unset($fresh['password']);
+                $_SESSION['user'] = $fresh;
+            }
             respond(['ok' => true, 'id' => $id]);
         }
 

@@ -17,7 +17,7 @@ import {
 const html = htm.bind(React.createElement);
 const API = './api.php';
 
-const APP_VERSION = '1.0.3';
+const APP_VERSION = '1.0.5';
 console.log(`🎯 bidernet Tasks v${APP_VERSION}`);
 
 /* ============ API helper ============ */
@@ -831,9 +831,15 @@ function SettingsScreen() {
   const [s, setS] = useState(null);
   const [saved, setSaved] = useState(false);
   const [status, setStatus] = useState('');
+  const [log, setLog] = useState(null);
   const set = (k, v) => setS(p => ({ ...p, [k]: v }));
 
-  useEffect(() => { api('settings').then(setS).catch(() => setS({})); }, []);
+  const loadLog = () => api('notifications').then(setLog).catch(() => setLog([]));
+
+  useEffect(() => {
+    api('settings').then(setS).catch(() => setS({}));
+    loadLog();
+  }, []);
   if (!s) return html`<div class="px-5 text-sm text-zinc-400">טוען…</div>`;
 
   const save = async () => {
@@ -1187,8 +1193,9 @@ function App() {
 
   const load = useCallback(async () => {
     try {
-      const [board, updates] = await Promise.all([api('board'), api('updates')]);
+      const [board, updates, fresh] = await Promise.all([api('board'), api('updates'), api('me')]);
       setData(board); setFeed(updates); setErr('');
+      if (fresh && !fresh.guest) setMe(fresh);   // שם/צבע/טלפון מתעדכנים בלי התנתקות
     }
     catch (e) {
       if (e.message.includes('התחברות')) { setMe(null); return; }
