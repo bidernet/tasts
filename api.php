@@ -15,7 +15,7 @@ $APP_URL   = 'https://tasks.bidernet.co.il';
 $MAIL_FROM = 'no-reply@bidernet.co.il';
 
 // עוגיית הסשן: קיימת רק בשרת, לא נגישה ל-JS
-define('APP_VERSION', '1.0.5');
+define('APP_VERSION', '1.0.6');
 
 session_set_cookie_params([
     'lifetime' => 0,
@@ -116,6 +116,20 @@ function requireAdmin() {
     return $u;
 }
 function nid($p) { return $p . bin2hex(random_bytes(6)); }
+
+/**
+ * נרמול מספר טלפון לפורמט בינלאומי.
+ * מקבל: 052-660-4361 · 0526604361 · +972526604361 · 972526604361
+ * מחזיר: 972526604361
+ */
+function normalizePhone($raw, $cc = '972') {
+    $d = preg_replace('/\D/', '', (string)$raw);   // רק ספרות
+    if ($d === '') return '';
+    if (str_starts_with($d, '00'))  $d = substr($d, 2);          // 00972... → 972...
+    if (str_starts_with($d, '0'))   $d = $cc . substr($d, 1);    // 052...   → 97252...
+    elseif (!str_starts_with($d, $cc) && strlen($d) <= 9) $d = $cc . $d;  // 52...  → 97252...
+    return $d;
+}
 
 function logActivity($pdo, $taskId, $actorName, $field, $old, $new) {
     $pdo->prepare("INSERT INTO task_activity (id, taskId, actorName, field, oldValue, newValue)
@@ -690,11 +704,10 @@ try {
 
         // Green API דורש chatId עם סיומת: 9725...@c.us למספר, ...@g.us לקבוצה
         $isDirect = in_array($channel, ['phone', 'staff'], true);
-        if (($s['waProvider'] ?? '') === 'greenapi' && $isDirect && !str_contains($to, '@')) {
-            $to = preg_replace('/\D/', '', $to) . '@c.us';
-        }
-        if (($s['waProvider'] ?? '') === 'whapi' && $isDirect) {
-            $to = preg_replace('/\D/', '', $to);
+        if ($isDirect && !str_contains($to, '@')) {
+            $to = normalizePhone($to);
+            if (strlen($to) < 11) fail('מספר הטלפון לא תקין: ' . $to);
+            if (($s['waProvider'] ?? '') === 'greenapi') $to .= '@c.us';
         }
         if (empty($s['waEnabled']) || empty($s['waToken']) || empty($s['waBaseUrl'])) {
             fail('חיבור הוואטסאפ לא מוגדר — עבור למסך הגדרות');

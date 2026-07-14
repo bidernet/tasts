@@ -17,7 +17,7 @@ import {
 const html = htm.bind(React.createElement);
 const API = './api.php';
 
-const APP_VERSION = '1.0.5';
+const APP_VERSION = '1.0.6';
 console.log(`🎯 bidernet Tasks v${APP_VERSION}`);
 
 /* ============ API helper ============ */
@@ -52,6 +52,16 @@ const AVATAR_COLORS = ['#013d19','#f43f5e','#3b82f6','#10b981','#f59e0b','#8b5cf
 
 /* ============ Utils ============ */
 const initials = (n) => (n || '?').trim().slice(0, 2);
+
+// 052-660-4361 / 0526604361 / +972526604361  →  972526604361
+const intlPhone = (raw, cc = '972') => {
+  let d = String(raw || '').replace(/\D/g, '');
+  if (!d) return '';
+  if (d.startsWith('00')) d = d.slice(2);
+  if (d.startsWith('0')) d = cc + d.slice(1);
+  else if (!d.startsWith(cc) && d.length <= 9) d = cc + d;
+  return d;
+};
 const today = () => new Date().setHours(0, 0, 0, 0);
 const isLate = (t) => t.dueDate && t.status !== 'done' && new Date(t.dueDate) < today();
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('he-IL', { day: 'numeric', month: 'short' }) : '';
@@ -749,7 +759,7 @@ function WhatsAppModal({ task, client, users, onClose, mode = 'client' }) {
 
   const waLink = () => {
     const raw = mode === 'staff' ? (assignee?.phone || '') : (client?.phone || '');
-    const phone = raw.replace(/\D/g, '');
+    const phone = intlPhone(raw);
     window.open(phone
       ? `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`
       : `https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
@@ -774,7 +784,7 @@ function WhatsAppModal({ task, client, users, onClose, mode = 'client' }) {
               <div>
                 <div class="text-sm font-bold">${assignee?.name || '—'}</div>
                 <div class="text-[11px] text-zinc-500" dir="ltr">
-                  ${assignee?.phone || 'לא הוגדר מספר טלפון'}
+                  ${assignee?.phone ? '+' + intlPhone(assignee.phone) : 'לא הוגדר מספר טלפון'}
                 </div>
               </div>
             </div>
