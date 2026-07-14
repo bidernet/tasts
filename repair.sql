@@ -105,6 +105,12 @@ SET @s = (SELECT IF(
   'SELECT 1', 'ALTER TABLE `settings` ADD COLUMN `waStaffTemplate` TEXT NULL'));
 PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 
+SET @s = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA=@db AND TABLE_NAME='clients' AND COLUMN_NAME='logoPath') > 0,
+  'SELECT 1', 'ALTER TABLE `clients` ADD COLUMN `logoPath` VARCHAR(500) NULL'));
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+
 -- ========== 3. הגדרות ברירת מחדל ==========
 
 INSERT INTO `settings` (`id`,`waProvider`,`waEnabled`,`waTemplate`,`waStaffTemplate`) VALUES

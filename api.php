@@ -15,7 +15,7 @@ $APP_URL   = 'https://tasks.bidernet.co.il';
 $MAIL_FROM = 'no-reply@bidernet.co.il';
 
 // עוגיית הסשן: קיימת רק בשרת, לא נגישה ל-JS
-define('APP_VERSION', '1.0.6');
+define('APP_VERSION', '1.0.7');
 
 session_set_cookie_params([
     'lifetime' => 0,
@@ -360,12 +360,14 @@ try {
             $name = trim($input['name'] ?? '');
             if (!$name) fail('חסר שם לקוח');
             $pdo->prepare("
-                INSERT INTO clients (id, name, color, contact, phone, waGroupId, active)
-                VALUES (?,?,?,?,?,?,1)
+                INSERT INTO clients (id, name, color, contact, phone, waGroupId, logoPath, active)
+                VALUES (?,?,?,?,?,?,?,1)
                 ON DUPLICATE KEY UPDATE name=VALUES(name), color=VALUES(color), contact=VALUES(contact),
-                                        phone=VALUES(phone), waGroupId=VALUES(waGroupId)
+                                        phone=VALUES(phone), waGroupId=VALUES(waGroupId),
+                                        logoPath=VALUES(logoPath)
             ")->execute([$id, $name, $input['color'] ?? '#013d19', $input['contact'] ?? null,
-                         ($input['phone'] ?? '') ?: null, ($input['waGroupId'] ?? '') ?: null]);
+                         ($input['phone'] ?? '') ?: null, ($input['waGroupId'] ?? '') ?: null,
+                         ($input['logoPath'] ?? '') ?: null]);
             respond(['ok' => true, 'id' => $id]);
         }
         if ($method === 'DELETE') {
@@ -376,6 +378,37 @@ try {
             respond(['ok' => true]);
         }
         fail('Method not allowed', 405);
+
+    // ---------- לוגו של לקוח ----------
+    case 'client_logo':
+        requireAdmin();
+        if ($method !== 'POST') fail('Method not allowed', 405);
+        if (empty($_FILES['file'])) fail('לא התקבל קובץ');
+
+        $f = $_FILES['file'];
+        if ($f['error'] !== UPLOAD_ERR_OK) fail('ההעלאה נכשלה (קוד ' . $f['error'] . ')');
+        if ($f['size'] > 3 * 1024 * 1024)  fail('הלוגו גדול מ-3MB');
+
+        $ext = strtolower(pathinfo($f['name'], PATHINFO_EXTENSION));
+        if (!in_array($ext, ['jpg','jpeg','png','webp','svg','gif'], true)) {
+            fail('פורמט לא נתמך. השתמש ב-PNG, JPG, WEBP או SVG');
+        }
+        $info = @getimagesize($f['tmp_name']);
+        if ($ext !== 'svg' && !$info) fail('הקובץ אינו תמונה תקינה');
+
+        $dir = __DIR__ . '/uploads/clients';
+        if (!is_dir($dir) && !mkdir($dir, 0755, true)) fail('לא ניתן ליצור תיקיית העלאה');
+
+        $safe = bin2hex(random_bytes(6)) . '.' . $ext;
+        $rel  = 'uploads/clients/' . $safe;
+        if (!move_uploaded_file($f['tmp_name'], __DIR__ . '/' . $rel)) fail('שמירת הקובץ נכשלה');
+
+        // מחיקת הלוגו הקודם, אם יש
+        $old = $_POST['oldPath'] ?? '';
+        if ($old && str_starts_with($old, 'uploads/clients/') && is_file(__DIR__ . '/' . $old)) {
+            @unlink(__DIR__ . '/' . $old);
+        }
+        respond(['ok' => true, 'logoPath' => $rel]);
 
     // ---------- משימות ----------
     case 'tasks':

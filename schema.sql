@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS `clients` (
   `contact`   VARCHAR(200) NULL,
   `phone`     VARCHAR(30)  NULL,
   `waGroupId` VARCHAR(100) NULL,
+  `logoPath`  VARCHAR(500) NULL,
   `active`    TINYINT(1)   DEFAULT 1,
   `createdAt` DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

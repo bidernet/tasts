@@ -17,7 +17,7 @@ import {
 const html = htm.bind(React.createElement);
 const API = './api.php';
 
-const APP_VERSION = '1.0.6';
+const APP_VERSION = '1.0.7';
 console.log(`🎯 bidernet Tasks v${APP_VERSION}`);
 
 /* ============ API helper ============ */
@@ -49,6 +49,39 @@ const PRIOS = {
   low:    { label: 'נמוך', bar: '#e4e4e7' },
 };
 const AVATAR_COLORS = ['#013d19','#f43f5e','#3b82f6','#10b981','#f59e0b','#8b5cf6','#ec4899','#0ea5e9','#84cc16','#64748b'];
+
+/* ============ Color picker ============ */
+function ColorPicker({ value, onChange }) {
+  const val = value || '#013d19';
+  const [hex, setHex] = useState(val);
+  useEffect(() => setHex(val), [val]);
+
+  const commit = (v) => {
+    const clean = v.startsWith('#') ? v : '#' + v;
+    setHex(clean);
+    if (/^#[0-9a-fA-F]{6}$/.test(clean)) onChange(clean);
+  };
+
+  return html`
+    <div class="space-y-2.5">
+      <div class="flex items-center gap-2">
+        <input type="color" value=${val} onChange=${e => { setHex(e.target.value); onChange(e.target.value); }}
+          class="w-11 h-10 rounded-xl border border-zinc-200 cursor-pointer bg-white p-0.5 shrink-0" />
+        <input class=${`${inputCls} font-mono`} dir="ltr" value=${hex} maxLength=${7}
+               placeholder="#013d19" onChange=${e => commit(e.target.value)} />
+        <div class="w-10 h-10 rounded-xl border border-zinc-200 shrink-0" style=${{ background: val }}></div>
+      </div>
+      <div class="flex gap-1.5 flex-wrap">
+        ${AVATAR_COLORS.map(c => html`
+          <button key=${c} type="button" onClick=${() => onChange(c)} aria-label=${c}
+            class=${`w-7 h-7 rounded-full grid place-items-center transition ${
+              val.toLowerCase() === c ? 'ring-2 ring-offset-2 ring-brand-green' : 'hover:scale-110'}`}
+            style=${{ background: c }}>
+            ${val.toLowerCase() === c && html`<${Check} size=${13} color="#fff" />`}
+          </button>`)}
+      </div>
+    </div>`;
+}
 
 /* ============ Utils ============ */
 const initials = (n) => (n || '?').trim().slice(0, 2);
@@ -251,8 +284,14 @@ function Card({ task, users, clients, counts, onOpen, onQuickMove, mobile, canEd
       <div class="font-medium leading-snug mb-2.5">${task.title}</div>
 
       <div class="flex items-center gap-1.5 flex-wrap">
-        ${client && html`<span class="text-[11px] font-medium px-2 py-0.5 rounded-lg text-white"
-                               style=${{ background: client.color }}>${client.name}</span>`}
+        ${client && html`
+          <span class="flex items-center gap-1.5 text-[11px] font-medium px-2 py-0.5 rounded-lg text-white"
+                style=${{ background: client.color }}>
+            ${client.logoPath && html`
+              <img src=${`./${client.logoPath}`} alt=""
+                   class="w-4 h-4 rounded-sm object-contain bg-white/90 p-px" />`}
+            ${client.name}
+          </span>`}
         ${task.dueDate && html`
           <span class=${`text-[11px] px-2 py-0.5 rounded-lg border ${late
             ? 'text-red-600 border-red-200 bg-red-50 font-semibold'
@@ -1050,7 +1089,7 @@ function TeamScreen({ users, onChange }) {
                        onChange=${e => set('password', e.target.value)} />
               <//>
               <${Field} label="טלפון וואטסאפ">
-                <input class=${inputCls} dir="ltr" value=${edit.phone || ''} placeholder="972501234567"
+                <input class=${inputCls} dir="ltr" value=${edit.phone || ''} placeholder="050-000-0000"
                        onChange=${e => set('phone', e.target.value)} />
               <//>
               <${Field} label="אימייל">
@@ -1059,14 +1098,7 @@ function TeamScreen({ users, onChange }) {
             </div>
 
             <${Field} label="צבע אווטאר">
-              <div class="flex gap-2 flex-wrap">
-                ${AVATAR_COLORS.map(c => html`
-                  <button key=${c} onClick=${() => set('color', c)}
-                    class=${`w-8 h-8 rounded-full grid place-items-center ${edit.color === c ? 'ring-2 ring-offset-2 ring-brand-green' : ''}`}
-                    style=${{ background: c }}>
-                    ${edit.color === c && html`<${Check} size=${14} color="#fff" />`}
-                  </button>`)}
-              </div>
+              <${ColorPicker} value=${edit.color} onChange=${v => set('color', v)} />
             <//>
 
             <div class="flex gap-2 pt-1">
@@ -1082,7 +1114,22 @@ function ClientsScreen({ clients, onChange }) {
   const [edit, setEdit] = useState(null);
   const [groups, setGroups] = useState(null);
   const [loadingG, setLoadingG] = useState(false);
+  const [upBusy, setUpBusy] = useState(false);
   const set = (k, v) => setEdit(p => ({ ...p, [k]: v }));
+
+  const uploadLogo = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    setUpBusy(true);
+    const form = new FormData();
+    form.append('file', file);
+    if (edit.logoPath) form.append('oldPath', edit.logoPath);
+    try {
+      const r = await api('client_logo', { method: 'POST', form });
+      set('logoPath', r.logoPath);
+    } catch (err) { alert(err.message); }
+    setUpBusy(false);
+    e.target.value = '';
+  };
 
   const loadGroups = async () => {
     setLoadingG(true);
@@ -1112,7 +1159,11 @@ function ClientsScreen({ clients, onChange }) {
       <div class="space-y-2">
         ${clients.map(c => html`
           <div key=${c.id} class="flex items-center gap-3 bg-white border border-zinc-200 rounded-xl px-4 py-3">
-            <span class="w-3 h-3 rounded-full" style=${{ background: c.color }}></span>
+            ${c.logoPath
+              ? html`<img src=${`./${c.logoPath}`} alt=${c.name}
+                       class="w-9 h-9 rounded-lg object-contain bg-white border border-zinc-100 p-0.5" />`
+              : html`<span class="w-9 h-9 rounded-lg grid place-items-center text-white text-xs font-bold"
+                       style=${{ background: c.color }}>${initials(c.name)}</span>`}
             <div>
               <div class="font-medium text-sm">${c.name}</div>
               <div class="text-xs text-zinc-500 flex gap-2">
@@ -1133,7 +1184,8 @@ function ClientsScreen({ clients, onChange }) {
       ${edit && html`
         <div class="fixed inset-0 z-50 grid place-items-center p-4">
           <div class="absolute inset-0 bg-black/40" onClick=${() => setEdit(null)}></div>
-          <div class="relative bg-white rounded-2xl p-5 w-full max-w-sm space-y-4 shadow-2xl">
+          <div class="relative bg-white rounded-2xl p-5 w-full max-w-md space-y-4 shadow-2xl
+                      max-h-[90vh] overflow-y-auto">
             <b>${edit.id ? 'עריכת לקוח' : 'לקוח חדש'}</b>
             <${Field} label="שם הלקוח">
               <input class=${inputCls} value=${edit.name} autoFocus onChange=${e => set('name', e.target.value)} />
@@ -1141,8 +1193,8 @@ function ClientsScreen({ clients, onChange }) {
             <${Field} label="איש קשר">
               <input class=${inputCls} value=${edit.contact || ''} onChange=${e => set('contact', e.target.value)} />
             <//>
-            <${Field} label="טלפון וואטסאפ (פורמט בינלאומי)">
-              <input class=${inputCls} dir="ltr" value=${edit.phone || ''} placeholder="972501234567"
+            <${Field} label="טלפון וואטסאפ">
+              <input class=${inputCls} dir="ltr" value=${edit.phone || ''} placeholder="050-000-0000"
                      onChange=${e => set('phone', e.target.value)} />
             <//>
             <${Field} label="קבוצת וואטסאפ">
@@ -1163,17 +1215,35 @@ function ClientsScreen({ clients, onChange }) {
                   </button>
                 </div>`}
             <//>
-            <${Field} label="צבע">
-              <div class="flex gap-2 flex-wrap">
-                ${AVATAR_COLORS.map(c => html`
-                  <button key=${c} onClick=${() => set('color', c)}
-                    class=${`w-8 h-8 rounded-full grid place-items-center ${edit.color === c ? 'ring-2 ring-offset-2 ring-brand-green' : ''}`}
-                    style=${{ background: c }}>
-                    ${edit.color === c && html`<${Check} size=${14} color="#fff" />`}
-                  </button>`)}
+            <${Field} label="לוגו">
+              <div class="flex items-center gap-3">
+                ${edit.logoPath
+                  ? html`<img src=${`./${edit.logoPath}`} alt="לוגו"
+                           class="w-16 h-16 rounded-xl object-contain bg-white border border-zinc-200 p-1" />`
+                  : html`<div class="w-16 h-16 rounded-xl grid place-items-center text-white font-bold border border-zinc-200"
+                           style=${{ background: edit.color || '#013d19' }}>${initials(edit.name) || '?'}</div>`}
+
+                <div class="flex-1 space-y-1.5">
+                  <label class="block">
+                    <span class="inline-block text-xs font-bold bg-zinc-100 hover:bg-zinc-200
+                                 rounded-xl px-3 py-2 cursor-pointer transition">
+                      ${upBusy ? 'מעלה…' : (edit.logoPath ? 'החלפת לוגו' : 'העלאת לוגו')}
+                    </span>
+                    <input type="file" class="hidden" accept="image/*" onChange=${uploadLogo} />
+                  </label>
+                  ${edit.logoPath && html`
+                    <button onClick=${() => set('logoPath', '')}
+                      class="block text-xs text-zinc-400 hover:text-red-600">הסרת הלוגו</button>`}
+                  <p class="text-[10px] text-zinc-400">PNG · JPG · SVG · עד 3MB</p>
+                </div>
               </div>
             <//>
-            <div class="flex gap-2">
+
+            <${Field} label="צבע">
+              <${ColorPicker} value=${edit.color} onChange=${v => set('color', v)} />
+            <//>
+
+            <div class="flex gap-2 pt-1">
               <${Btn} onClick=${save}>שמירה<//>
               <${Btn} variant="ghost" onClick=${() => setEdit(null)}>ביטול<//>
             </div>
