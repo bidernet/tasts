@@ -15,7 +15,7 @@ $APP_URL   = 'https://tasks.bidernet.co.il';
 $MAIL_FROM = 'no-reply@bidernet.co.il';
 
 // עוגיית הסשן: קיימת רק בשרת, לא נגישה ל-JS
-define('APP_VERSION', '1.0.7');
+define('APP_VERSION', '1.0.8');
 
 session_set_cookie_params([
     'lifetime' => 0,
@@ -89,6 +89,42 @@ try {
     echo json_encode(['error' => 'החיבור למסד הנתונים נכשל', 'detail' => $e->getMessage()]);
     exit;
 }
+
+/**
+ * מיגרציה אוטומטית: משלימה עמודות שנוספו בגרסאות חדשות.
+ * רצה פעם אחת בלבד (מסומן בסשן), ולא דורשת הרצת SQL ידנית בכל עדכון.
+ */
+function autoMigrate($pdo) {
+    if (!empty($_SESSION['schema_ok'])) return;
+
+    $needed = [
+        'users'         => ['phone' => 'VARCHAR(30) NULL'],
+        'clients'       => ['phone' => 'VARCHAR(30) NULL',
+                            'waGroupId' => 'VARCHAR(100) NULL',
+                            'logoPath' => 'VARCHAR(500) NULL'],
+        'task_comments' => ['internal' => 'TINYINT(1) DEFAULT 1',
+                            'editedAt' => 'DATETIME NULL'],
+        'settings'      => ['waStaffTemplate' => 'TEXT NULL'],
+    ];
+    foreach ($needed as $table => $cols) {
+        $exists = $pdo->prepare("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+                                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?");
+        $exists->execute([$table]);
+        if (!$exists->fetchColumn()) continue;
+
+        foreach ($cols as $col => $def) {
+            $q = $pdo->prepare("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?");
+            $q->execute([$table, $col]);
+            if (!$q->fetchColumn()) {
+                try { $pdo->exec("ALTER TABLE `$table` ADD COLUMN `$col` $def"); }
+                catch (Throwable $e) { error_log("[bidernet] migrate $table.$col: " . $e->getMessage()); }
+            }
+        }
+    }
+    $_SESSION['schema_ok'] = true;
+}
+autoMigrate($pdo);
 
 rememberCookieLogin($pdo);
 
@@ -901,7 +937,17 @@ try {
     }
 } catch (PDOException $e) {
     error_log('[bidernet-tasks] ' . $e->getMessage());
-    respond(['error' => 'שגיאת מסד נתונים'], 500);
+    $msg = $e->getMessage();
+    // הודעה מובנת במקום "שגיאת מסד נתונים" סתום
+    if (str_contains($msg, 'Unknown column')) {
+        preg_match("/Unknown column '([^']+)'/", $msg, $m);
+        respond(['error' => 'חסרה עמודה במסד הנתונים: ' . ($m[1] ?? '?') .
+                            ' — התנתק והתחבר מחדש כדי להשלים את העדכון האוטומטי'], 500);
+    }
+    if (str_contains($msg, "doesn't exist")) {
+        respond(['error' => 'חסרה טבלה במסד הנתונים — הרץ את repair.sql'], 500);
+    }
+    respond(['error' => 'שגיאת מסד נתונים: ' . mb_substr($msg, 0, 200)], 500);
 } catch (Throwable $e) {
     error_log('[bidernet-tasks] ' . $e->getMessage());
     respond(['error' => 'שגיאת שרת'], 500);

@@ -17,7 +17,7 @@ import {
 const html = htm.bind(React.createElement);
 const API = './api.php';
 
-const APP_VERSION = '1.0.7';
+const APP_VERSION = '1.0.8';
 console.log(`🎯 bidernet Tasks v${APP_VERSION}`);
 
 /* ============ API helper ============ */
