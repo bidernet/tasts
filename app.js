@@ -17,7 +17,7 @@ import {
 const html = htm.bind(React.createElement);
 const API = './api.php';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.0.3';
 console.log(`🎯 bidernet Tasks v${APP_VERSION}`);
 
 /* ============ API helper ============ */
@@ -1467,7 +1467,7 @@ function App() {
       <main class="min-w-0 flex flex-col">
         ${err && html`<div class="bg-red-50 border-b border-red-200 text-red-700 text-xs text-center py-2">${err}</div>`}
 
-        <header class="bg-white border-b border-zinc-200 px-5 py-3 flex items-center gap-2.5 flex-wrap sticky top-0 z-20">
+        <header class="bg-white border-b border-zinc-200 px-5 py-3 flex items-center gap-2.5 sticky top-0 z-20">
           ${isAdmin && html`
             <${Btn} onClick=${() => setOpen({ id: 'new' })}>
               <${Plus} size=${16} class="inline -mt-0.5 ml-1" /> משימה חדשה
@@ -1476,15 +1476,15 @@ function App() {
           ${['board','late','mine'].includes(view) && html`
             <div class="relative">
               <${Search} size=${15} class="absolute top-2.5 start-3 text-zinc-400" />
-              <input class=${`${inputCls} ps-9 w-52`} placeholder="חיפוש משימה…"
+              <input class=${`${inputCls} ps-9 !w-56`} placeholder="חיפוש משימה…"
                      value=${q} onChange=${e => setQ(e.target.value)} />
             </div>
-            <select class=${`${inputCls} w-40`} value=${fClient} onChange=${e => setFClient(e.target.value)}>
+            <select class=${`${inputCls} !w-44`} value=${fClient} onChange=${e => setFClient(e.target.value)}>
               <option value="">כל הלקוחות</option>
               ${data.clients.map(c => html`<option key=${c.id} value=${c.name}>${c.name}</option>`)}
             </select>
             ${isAdmin && html`
-              <select class=${`${inputCls} w-40`} value=${fUser} onChange=${e => setFUser(e.target.value)}>
+              <select class=${`${inputCls} !w-44`} value=${fUser} onChange=${e => setFUser(e.target.value)}>
                 <option value="">כל העובדים</option>
                 ${data.users.filter(u => u.role === 'admin').map(u =>
                   html`<option key=${u.id} value=${u.username}>${u.name}</option>`)}
@@ -1512,4 +1512,33 @@ function App() {
     </div>`;
 }
 
-createRoot(document.getElementById('root')).render(html`<${App} />`);
+/* ============ Error boundary ============ */
+class Boundary extends React.Component {
+  constructor(p) { super(p); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  componentDidCatch(err, info) { console.error('[bidernet] crash:', err, info); }
+  render() {
+    if (!this.state.err) return this.props.children;
+    return html`
+      <div class="min-h-screen grid place-items-center p-6 bg-white">
+        <div class="max-w-md text-center space-y-3">
+          <div class="text-4xl">⚠️</div>
+          <b class="block text-lg">משהו נשבר במסך הזה</b>
+          <p class="text-sm text-zinc-500 leading-relaxed">
+            שאר המערכת תקינה. אם זה חוזר, שלח את השורה הבאה למפתח:
+          </p>
+          <code class="block text-xs bg-zinc-100 rounded-xl p-3 text-start" dir="ltr">
+            v${APP_VERSION} · ${String(this.state.err?.message || this.state.err)}
+          </code>
+          <div class="flex gap-2 justify-center pt-1">
+            <button onClick=${() => location.reload()}
+              class="bg-brand-lime text-brand-green font-bold rounded-xl px-4 py-2">רענון</button>
+            <button onClick=${() => this.setState({ err: null })}
+              class="bg-zinc-100 rounded-xl px-4 py-2">חזרה</button>
+          </div>
+        </div>
+      </div>`;
+  }
+}
+
+createRoot(document.getElementById('root')).render(html`<${Boundary}><${App} /><//>`);

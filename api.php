@@ -15,7 +15,7 @@ $APP_URL   = 'https://tasks.bidernet.co.il';
 $MAIL_FROM = 'no-reply@bidernet.co.il';
 
 // עוגיית הסשן: קיימת רק בשרת, לא נגישה ל-JS
-define('APP_VERSION', '1.0.0');
+define('APP_VERSION', '1.0.3');
 
 session_set_cookie_params([
     'lifetime' => 0,
@@ -216,7 +216,8 @@ try {
                   . $link . "\n\n"
                   . "אם לא ביקשת לאפס סיסמה, אפשר להתעלם מהמייל הזה — הסיסמה הקיימת נשארת בתוקף.\n\n"
                   . "בידרנט";
-            $headers = "From: בידרנט <{$MAIL_FROM}>\r\n"
+            $fromName = '=?UTF-8?B?' . base64_encode('בידרנט') . '?=';
+            $headers = "From: {$fromName} <{$MAIL_FROM}>\r\n"
                      . "Content-Type: text/plain; charset=UTF-8\r\n"
                      . "MIME-Version: 1.0\r\n";
             @mail($email, '=?UTF-8?B?' . base64_encode('איפוס סיסמה · מערכת המשימות') . '?=', $body, $headers);
@@ -583,7 +584,7 @@ try {
             'tasks'   => $tasks,
             'counts'  => $counts,
             'clients' => $pdo->query("SELECT * FROM clients WHERE active = 1 ORDER BY name")->fetchAll(),
-            'users'   => $pdo->query("SELECT id, username, name, role, jobTitle, color, businessName
+            'users'   => $pdo->query("SELECT id, username, name, email, phone, role, jobTitle, color, businessName
                                       FROM users WHERE active = 1 ORDER BY name")->fetchAll(),
             'stamp'   => date('c'),
         ]);
