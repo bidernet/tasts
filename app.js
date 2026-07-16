@@ -1403,6 +1403,11 @@ function ClientsScreen({ clients, onChange }) {
               <${ColorPicker} value=${edit.color} onChange=${v => set('color', v)} />
             <//>
 
+            ${edit.id && html`
+              <${Field} label="חיבור פייסבוק">
+                <${MetaConnect} client=${edit} onChanged=${() => { onChange(); setEdit(null); }} />
+              <//>`}
+
             <div class="flex gap-2 pt-1">
               <${Btn} onClick=${save}>שמירה<//>
               <${Btn} variant="ghost" onClick=${() => setEdit(null)}>ביטול<//>
