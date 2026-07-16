@@ -11,13 +11,15 @@ import {
   LayoutGrid, Clock, User, Users, Building2, LogOut, Plus, Search, Download,
   RefreshCw, X, Trash2, Paperclip, MessageSquare, Send, AlertTriangle, Check, Pencil,
   Settings, MessageCircle, ExternalLink, Bell, Lock, Eye,
-  Menu, ChevronLeft, SlidersHorizontal, ArrowRightLeft
+  Menu, ChevronLeft, SlidersHorizontal, ArrowRightLeft, AlarmClock, Repeat,
+  Activity, TrendingUp, Target, DollarSign, FileText, CheckCircle2, MessageCircle as MsgIcon, ExternalLink as LinkIcon,
+  Facebook, Link2, Unlink, RefreshCw as Refresh2
 } from 'lucide-react';
 
 const html = htm.bind(React.createElement);
 const API = './api.php';
 
-const APP_VERSION = '1.0.8';
+const APP_VERSION = '1.3.1';
 console.log(`🎯 bidernet Tasks v${APP_VERSION}`);
 
 /* ============ API helper ============ */
@@ -391,7 +393,9 @@ function Drawer({ task, users, clients, me, onClose, onSaved, mobile }) {
     title: task.title || '', description: task.description || '',
     clientName: task.clientName || '', assignedTo: task.assignedTo || (canEdit ? me.username : ''),
     status: task.status || 'todo', priority: task.priority || 'normal',
-    dueDate: task.dueDate || '', visibleToClient: task.visibleToClient == 1,
+    dueDate: task.dueDate || '',
+    // משימה חדשה → גלויה ללקוח כברירת מחדל. משימה קיימת → כפי שנשמרה.
+    visibleToClient: isNew ? true : task.visibleToClient == 1,
   });
   const [comments, setComments] = useState([]);
   const [activity, setActivity] = useState([]);
@@ -572,8 +576,11 @@ function Drawer({ task, users, clients, me, onClose, onSaved, mobile }) {
               <input type="checkbox" class="accent-brand-green w-4 h-4" checked=${f.visibleToClient}
                      onChange=${e => set('visibleToClient', e.target.checked)} />
               <span class="text-sm">הצג את המשימה ללקוח</span>
-              <span class="mr-auto text-xs text-zinc-400">כבוי = פנימי בלבד</span>
+              <span class="mr-auto text-xs text-zinc-400">${f.visibleToClient ? 'הלקוח יראה את המשימה' : 'פנימי — הלקוח לא יראה'}</span>
             </label>`}
+
+          ${!isNew && canEdit && html`
+            <${Reminders} task=${{ ...task, ...f }} client=${client} users=${users} />`}
 
           ${!isNew && html`
             <div class="border-t border-zinc-200 pt-4">
@@ -787,13 +794,15 @@ function WhatsAppModal({ task, client, users, onClose, mode = 'client' }) {
     }).catch(() => setMsg(`המשימה "${task.title}"`));
   }, []);
 
+  const [sendErr, setSendErr] = useState('');
+
   const send = async () => {
-    setBusy(true);
+    setBusy(true); setSendErr('');
     try {
       await api('whatsapp_send', { method: 'POST', body: { taskId: task.id, channel, message: msg } });
       setDone(true);
       setTimeout(onClose, 1200);
-    } catch (e) { alert(e.message); setBusy(false); }
+    } catch (e) { setSendErr(e.message); setBusy(false); }
   };
 
   const waLink = () => {
@@ -856,6 +865,10 @@ function WhatsAppModal({ task, client, users, onClose, mode = 'client' }) {
             <textarea class=${`${inputCls} min-h-[110px] leading-relaxed`} value=${msg}
                       onChange=${e => setMsg(e.target.value)}></textarea>
           <//>
+
+          ${sendErr && html`
+            <div class="text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5
+                        leading-relaxed whitespace-pre-wrap" dir="auto">${sendErr}</div>`}
 
           <div class="flex gap-2">
             <${Btn} onClick=${send} disabled=${busy || (mode === 'staff'
@@ -998,6 +1011,152 @@ function SettingsScreen() {
         השליחה מתבצעת דרך שער לא-רשמי המחובר למספר וואטסאפ אמיתי בסריקת QR.
         חבר מספר ייעודי של המשרד, לא נייד אישי, ושלח רק ידנית ובקצב סביר.
       </div>
+    </div>`;
+}
+
+
+/* ============ Reminders ============ */
+function Reminders({ task, client, users, onChanged }) {
+  const [list, setList] = useState([]);
+  const [open, setOpen] = useState(false);
+  const assignee = users.find(u => u.username === task.assignedTo);
+
+  // ברירת מחדל: מחר ב-09:00
+  const defaultWhen = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(9, 0, 0, 0);
+    return d.toISOString().slice(0, 16);
+  };
+
+  const [form, setForm] = useState({
+    target: 'staff', nextRunAt: defaultWhen(), repeatEvery: 0, repeatTimes: 1, message: '',
+  });
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const load = useCallback(async () => {
+    try { setList(await api('reminders', { query: { taskId: task.id } })); } catch {}
+  }, [task.id]);
+  useEffect(() => { load(); }, [load]);
+
+  const save = async () => {
+    try {
+      await api('reminders', { method: 'POST', body: {
+        taskId: task.id, target: form.target,
+        nextRunAt: form.nextRunAt.replace('T', ' '),
+        repeatEvery: Number(form.repeatEvery) || 0,
+        repeatTimes: Number(form.repeatTimes) || 1,
+        message: form.message,
+      }});
+      setOpen(false); setForm(f => ({ ...f, message: '' })); load(); onChanged?.();
+    } catch (e) { alert(e.message); }
+  };
+
+  const remove = async (id) => {
+    await api('reminders', { method: 'DELETE', query: { id } });
+    load();
+  };
+
+  const targetLabel = (t) => t === 'staff' ? `לעובד (${assignee?.name || '—'})`
+                          : t === 'group' ? 'לקבוצת הלקוח' : 'למספר הלקוח';
+
+  const preset = (label, hours, times) => html`
+    <button onClick=${() => {
+      const d = new Date(); d.setHours(d.getHours() + hours, 0, 0, 0);
+      setForm(f => ({ ...f, nextRunAt: new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+        .toISOString().slice(0, 16), repeatEvery: times > 1 ? 24 : 0, repeatTimes: times }));
+    }} class="text-[11px] border border-zinc-200 rounded-lg px-2 py-1 hover:bg-zinc-50">
+      ${label}
+    </button>`;
+
+  return html`
+    <div class="border-t border-zinc-200 pt-4">
+      <div class="flex items-center gap-2 mb-2.5">
+        <${AlarmClock} size=${15} class="text-zinc-500" />
+        <h4 class="text-xs font-bold text-zinc-500">תזכורות בוואטסאפ</h4>
+        <button onClick=${() => setOpen(v => !v)}
+          class="mr-auto text-xs font-bold text-brand-green bg-brand-mint rounded-lg px-2.5 py-1">
+          ${open ? 'ביטול' : '+ תזכורת'}
+        </button>
+      </div>
+
+      ${list.length === 0 && !open && html`
+        <div class="text-xs text-zinc-400">אין תזכורות מתוזמנות</div>`}
+
+      <div class="space-y-1.5">
+        ${list.map(r => html`
+          <div key=${r.id} class=${`flex items-center gap-2 border rounded-xl px-3 py-2 text-xs ${
+            r.active == 1 ? 'border-zinc-200' : 'border-zinc-100 bg-zinc-50 text-zinc-400'}`}>
+            <${AlarmClock} size=${13} class="text-zinc-400 shrink-0" />
+            <div class="min-w-0">
+              <div class="font-bold">${fmtStamp(r.nextRunAt)}</div>
+              <div class="text-[11px] text-zinc-500 flex items-center gap-1.5 flex-wrap">
+                <span>${targetLabel(r.target)}</span>
+                ${r.repeatEvery > 0 && html`
+                  <span class="flex items-center gap-0.5">
+                    <${Repeat} size=${10} /> כל ${r.repeatEvery} שעות · ${r.sentCount}/${r.repeatTimes}
+                  </span>`}
+                ${r.active != 1 && html`<span>· הסתיימה</span>`}
+              </div>
+            </div>
+            <button onClick=${() => remove(r.id)}
+              class="mr-auto text-zinc-400 hover:text-red-600 shrink-0"><${Trash2} size=${13} /></button>
+          </div>`)}
+      </div>
+
+      ${open && html`
+        <div class="mt-3 bg-zinc-50 rounded-xl p-3 space-y-3">
+          <div class="flex gap-1.5 flex-wrap">
+            ${preset('בעוד שעה', 1, 1)}
+            ${preset('מחר', 24, 1)}
+            ${preset('כל יום × 3', 24, 3)}
+            ${preset('כל יום × 7', 24, 7)}
+          </div>
+
+          <${Field} label="מתי לשלוח">
+            <input type="datetime-local" class=${`${inputCls} bg-white`} value=${form.nextRunAt}
+                   onChange=${e => set('nextRunAt', e.target.value)} />
+          <//>
+
+          <${Field} label="למי">
+            <select class=${`${inputCls} bg-white`} value=${form.target}
+                    onChange=${e => set('target', e.target.value)}>
+              <option value="staff" disabled=${!assignee?.phone}>
+                לעובד האחראי${assignee ? ` · ${assignee.name}` : ''}${!assignee?.phone ? ' (אין טלפון)' : ''}
+              </option>
+              <option value="group" disabled=${!client?.waGroupId}>
+                לקבוצת הלקוח${!client?.waGroupId ? ' (לא מוגדרת)' : ''}
+              </option>
+              <option value="phone" disabled=${!client?.phone}>
+                למספר הלקוח${!client?.phone ? ' (לא מוגדר)' : ''}
+              </option>
+            </select>
+          <//>
+
+          <div class="grid grid-cols-2 gap-2">
+            <${Field} label="חזרה כל (שעות)">
+              <input type="number" min="0" max="168" class=${`${inputCls} bg-white`}
+                     value=${form.repeatEvery} placeholder="0 = חד־פעמי"
+                     onChange=${e => set('repeatEvery', e.target.value)} />
+            <//>
+            <${Field} label="כמה פעמים">
+              <input type="number" min="1" max="20" class=${`${inputCls} bg-white`}
+                     value=${form.repeatTimes} disabled=${Number(form.repeatEvery) === 0}
+                     onChange=${e => set('repeatTimes', e.target.value)} />
+            <//>
+          </div>
+
+          <${Field} label="הודעה (ריק = תבנית ברירת המחדל)">
+            <textarea class=${`${inputCls} bg-white min-h-[60px] text-xs`} value=${form.message}
+                      placeholder="תזכורת: {task} · דדליין {due}"
+                      onChange=${e => set('message', e.target.value)}></textarea>
+          <//>
+
+          <${Btn} className="w-full text-sm" onClick=${save}>קביעת תזכורת<//>
+          <p class="text-[10px] text-zinc-400 leading-relaxed">
+            התזכורת נעצרת אוטומטית ברגע שהמשימה מסומנת כ״בוצע״.
+          </p>
+        </div>`}
     </div>`;
 }
 
@@ -1170,6 +1329,7 @@ function ClientsScreen({ clients, onChange }) {
                 ${c.contact && html`<span>${c.contact}</span>`}
                 ${c.phone && html`<span dir="ltr">${c.phone}</span>`}
                 ${c.waGroupId && html`<span class="text-green-600">קבוצה מחוברת</span>`}
+                ${c.metaPageId && html`<span class="text-[#1877f2] flex items-center gap-0.5"><${Facebook} size=${10}/> פייסבוק</span>`}
               </div>
             </div>
             <div class="mr-auto flex gap-1">
@@ -1252,12 +1412,387 @@ function ClientsScreen({ clients, onChange }) {
     </div>`;
 }
 
+
+
+/* ============ Meta (Facebook) connect ============ */
+function MetaConnect({ client, onChanged }) {
+  const [pages, setPages] = useState(null);   // null=לא בתהליך, []=נטען
+  const [loading, setLoading] = useState(false);
+  const [sel, setSel] = useState(null);
+  const connected = !!client.metaPageId;
+
+  // מאזין להודעה מחלון ה-OAuth שנסגר
+  useEffect(() => {
+    const onMsg = async (e) => {
+      if (e.data === 'meta_done') { setLoading(true); await loadPages(); }
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
+  const connect = async () => {
+    try {
+      const { url } = await api('meta_connect', { query: { clientName: client.name } });
+      window.open(url, 'meta_oauth', 'width=600,height=700');
+    } catch (e) { alert(e.message); }
+  };
+
+  const loadPages = async () => {
+    try {
+      const r = await api('meta_pages');
+      setPages(r.pages || []);
+    } catch (e) { alert(e.message); setPages(null); }
+    setLoading(false);
+  };
+
+  const savePage = async () => {
+    if (!sel) return;
+    try {
+      await api('meta_save_page', { method: 'POST', body: {
+        pageId: sel.id, pageName: sel.name, pageToken: sel.token, adAccount: sel.adAccount || '',
+      }});
+      setPages(null); onChanged?.();
+    } catch (e) { alert(e.message); }
+  };
+
+  const disconnect = async () => {
+    if (!confirm(`לנתק את הדף של ${client.name} מפייסבוק?`)) return;
+    await api('meta_disconnect', { method: 'POST', body: { clientName: client.name } });
+    onChanged?.();
+  };
+
+  if (connected) return html`
+    <div class="border border-green-200 bg-green-50 rounded-xl p-3">
+      <div class="flex items-center gap-2">
+        <${Facebook} size=${18} class="text-[#1877f2]" />
+        <div class="min-w-0">
+          <div class="text-sm font-bold">${client.metaPageName || 'דף מחובר'}</div>
+          <div class="text-[11px] text-green-700">מחובר · נתונים נמשכים אוטומטית</div>
+        </div>
+        <button onClick=${disconnect} class="mr-auto text-zinc-400 hover:text-red-600 flex items-center gap-1 text-xs">
+          <${Unlink} size=${13} /> ניתוק
+        </button>
+      </div>
+    </div>`;
+
+  if (pages) return html`
+    <div class="border border-zinc-200 rounded-xl p-3 space-y-2">
+      <div class="text-xs font-bold text-zinc-600">בחר את הדף העסקי לחיבור:</div>
+      ${loading && html`<div class="text-xs text-zinc-400">טוען דפים…</div>`}
+      ${pages.map(p => html`
+        <button key=${p.id} onClick=${() => setSel(p)}
+          class=${`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-start border transition ${
+            sel?.id === p.id ? 'bg-brand-lime border-brand-green' : 'border-zinc-200 hover:bg-zinc-50'}`}>
+          <${Facebook} size=${15} class="text-[#1877f2]" />
+          <div>
+            <div class="text-sm font-medium">${p.name}</div>
+            ${p.category && html`<div class="text-[10px] text-zinc-400">${p.category}</div>`}
+          </div>
+          ${sel?.id === p.id && html`<${Check} size=${15} class="mr-auto text-brand-green" />`}
+        </button>`)}
+      ${!pages.length && html`<div class="text-xs text-amber-700">לא נמצאו דפים. ודא שיש לך גישת ניהול לדף.</div>`}
+      <div class="flex gap-2 pt-1">
+        <${Btn} className="text-sm" onClick=${savePage} disabled=${!sel}>שמירת הדף<//>
+        <${Btn} variant="ghost" className="text-sm" onClick=${() => setPages(null)}>ביטול<//>
+      </div>
+    </div>`;
+
+  return html`
+    <button onClick=${connect}
+      class="w-full flex items-center justify-center gap-2 bg-[#1877f2] text-white font-bold
+             rounded-xl px-4 py-2.5 hover:brightness-110 transition">
+      <${Facebook} size=${18} /> התחברות לפייסבוק
+    </button>
+    <p class="text-[10px] text-zinc-400 mt-1.5 text-center leading-relaxed">
+      פותח חלון של פייסבוק לבחירת דף עסקי. לאחר החיבור, לידים ונתוני קמפיין יימשכו אוטומטית.
+    </p>`;
+}
+
+/* ============ Timeline ============ */
+const TL_TYPES = {
+  post:     { label: 'פוסט',     icon: FileText,     color: '#3b82f6' },
+  campaign: { label: 'קמפיין',   icon: Target,       color: '#8b5cf6' },
+  task:     { label: 'בוצע',     icon: CheckCircle2, color: '#10b981' },
+  update:   { label: 'עדכון',    icon: MsgIcon,      color: '#f59e0b' },
+  note:     { label: 'הערה',     icon: Activity,     color: '#64748b' },
+  status:   { label: 'בתהליך',   icon: AlarmClock,   color: '#0ea5e9' },
+};
+const TASK_STATUS = {
+  todo:        { label: 'ממתין',  color: '#94a3b8' },
+  in_progress: { label: 'בעבודה', color: '#0ea5e9' },
+  review:      { label: 'בבדיקה', color: '#f59e0b' },
+  done:        { label: 'הושלם',  color: '#10b981' },
+};
+const monthLabel = (ym) => {
+  const [y, m] = ym.split('-');
+  const names = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני','יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
+  return `${names[+m - 1]} ${y}`;
+};
+const nis = (n) => '₪' + Number(n || 0).toLocaleString('he-IL');
+const num = (n) => Number(n || 0).toLocaleString('he-IL');
+
+function StatCard({ icon, label, value, tint }) {
+  return html`
+    <div class="bg-white border border-zinc-200 rounded-xl p-3 flex items-center gap-3">
+      <div class="w-9 h-9 rounded-lg grid place-items-center shrink-0"
+           style=${{ background: tint + '18', color: tint }}>${icon}</div>
+      <div class="min-w-0">
+        <div class="text-lg font-bold leading-none">${value}</div>
+        <div class="text-[11px] text-zinc-500 mt-0.5">${label}</div>
+      </div>
+    </div>`;
+}
+
+function Timeline({ clientName, isClient, users, clients, onManage }) {
+  const [data, setData] = useState({ events: [], summary: {} });
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const q = isClient ? {} : { clientName: clientName || '' };
+      setData(await api('timeline', { query: q }));
+    } catch {} 
+    setLoading(false);
+  }, [clientName, isClient]);
+  useEffect(() => { load(); }, [load]);
+
+  const client = clients?.find(c => c.name === (isClient ? clientName : clientName));
+
+  // קיבוץ אירועים לפי חודש
+  const byMonth = {};
+  for (const e of data.events) {
+    const m = (e.eventDate || '').slice(0, 7);
+    (byMonth[m] ||= []).push(e);
+  }
+  const months = Object.keys(byMonth).sort().reverse();
+
+  if (loading) return html`<div class="px-5 py-10 text-center text-sm text-zinc-400">טוען טיימליין…</div>`;
+
+  if (!isClient && !clientName) return html`
+    <div class="px-5 py-16 text-center text-sm text-zinc-400">
+      בחר לקוח כדי לראות את הטיימליין שלו
+    </div>`;
+
+  return html`
+    <div class="px-4 sm:px-5 pb-24 sm:pb-10 max-w-3xl">
+      ${!data.events.length && html`
+        <div class="text-center py-16">
+          <${Activity} size=${32} class="mx-auto text-zinc-300 mb-3" />
+          <p class="text-sm text-zinc-400">עדיין אין פעילות בטיימליין</p>
+          ${!isClient && html`
+            <button onClick=${onManage}
+              class="mt-3 text-sm font-bold text-brand-green bg-brand-mint rounded-xl px-4 py-2">
+              הוספת פעילות
+            </button>`}
+        </div>`}
+
+      ${months.map(m => {
+        const sum = data.summary[m] || {};
+        const evs = byMonth[m];
+        const hasMetrics = sum.leads || sum.reach || sum.clicks || sum.spend;
+        return html`
+          <div key=${m} class="mb-8">
+            <div class="flex items-center gap-2 mb-3 sticky top-0 bg-zinc-50/80 backdrop-blur py-1.5 z-10">
+              <h3 class="font-bold text-base">${monthLabel(m)}</h3>
+              <span class="text-xs text-zinc-400">${evs.length} פעילויות</span>
+            </div>
+
+            ${hasMetrics ? html`
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+                ${sum.leads ? html`<${StatCard} icon=${html`<${Target} size=${17}/>`}
+                   label="לידים" value=${num(sum.leads)} tint="#8b5cf6" />` : ''}
+                ${sum.reach ? html`<${StatCard} icon=${html`<${TrendingUp} size=${17}/>`}
+                   label="חשיפות" value=${num(sum.reach)} tint="#3b82f6" />` : ''}
+                ${sum.clicks ? html`<${StatCard} icon=${html`<${Activity} size=${17}/>`}
+                   label="קליקים" value=${num(sum.clicks)} tint="#10b981" />` : ''}
+                ${sum.spend ? html`<${StatCard} icon=${html`<${DollarSign} size=${17}/>`}
+                   label="הוצא" value=${nis(sum.spend)} tint="#f59e0b" />` : ''}
+              </div>` : ''}
+
+            <div class="relative ps-5">
+              <div class="absolute top-1 bottom-1 start-[7px] w-px bg-zinc-200"></div>
+              ${evs.map(e => {
+                const t = TL_TYPES[e.type] || TL_TYPES.note;
+                return html`
+                  <div key=${e.id} class="relative mb-4">
+                    <div class="absolute -start-5 top-1 w-3.5 h-3.5 rounded-full border-2 border-white"
+                         style=${{ background: t.color }}></div>
+                    <div class="bg-white border border-zinc-200 rounded-xl p-3.5">
+                      <div class="flex items-center gap-2 mb-1">
+                        <span class="text-[11px] font-bold px-2 py-0.5 rounded-md"
+                              style=${{ background: t.color + '18', color: t.color }}>${t.label}</span>
+                        ${e.platform && html`<span class="text-[11px] text-zinc-400">${e.platform}</span>`}
+                        <time class="mr-auto text-[11px] text-zinc-400">
+                          ${new Date(e.eventDate).toLocaleDateString('he-IL', {day:'numeric',month:'short'})}
+                        </time>
+                        ${!isClient && html`
+                          <button onClick=${async () => { await api('timeline',{method:'DELETE',query:{id:e.id}}); load(); }}
+                            class="text-zinc-300 hover:text-red-500"><${Trash2} size=${13}/></button>`}
+                      </div>
+                      <div class="font-bold text-sm">${e.title}</div>
+                      ${e.body && html`<p class="text-xs text-zinc-600 mt-1 leading-relaxed whitespace-pre-wrap">${e.body}</p>`}
+
+                      ${e.type === 'status' && e.status && html`
+                        <div class="flex items-center gap-2 mt-1.5">
+                          <span class="text-[11px] font-bold px-2 py-0.5 rounded-md"
+                                style=${{ background: (TASK_STATUS[e.status]?.color || '#94a3b8') + '18',
+                                          color: TASK_STATUS[e.status]?.color || '#94a3b8' }}>
+                            ${TASK_STATUS[e.status]?.label || e.status}
+                          </span>
+                          ${e.dueDate && html`
+                            <span class="text-[11px] text-zinc-400">
+                              יעד: ${new Date(e.dueDate).toLocaleDateString('he-IL',{day:'numeric',month:'short'})}
+                            </span>`}
+                        </div>`}
+
+                      ${(e.metricLeads || e.metricReach || e.metricClicks || e.metricSpend) && html`
+                        <div class="flex gap-3 mt-2 pt-2 border-t border-zinc-100 text-[11px]">
+                          ${e.metricLeads ? html`<span><b>${num(e.metricLeads)}</b> לידים</span>`:''}
+                          ${e.metricReach ? html`<span><b>${num(e.metricReach)}</b> חשיפות</span>`:''}
+                          ${e.metricClicks? html`<span><b>${num(e.metricClicks)}</b> קליקים</span>`:''}
+                          ${e.metricSpend ? html`<span><b>${nis(e.metricSpend)}</b></span>`:''}
+                        </div>`}
+
+                      ${e.linkUrl && html`
+                        <a href=${e.linkUrl} target="_blank"
+                           class="inline-flex items-center gap-1 text-[11px] text-brand-green font-bold mt-2 hover:underline">
+                          <${LinkIcon} size=${11}/> צפייה
+                        </a>`}
+                    </div>
+                  </div>`;
+              })}
+            </div>
+          </div>`;
+      })}
+    </div>`;
+}
+
+
+/* ============ Timeline manager (admin) ============ */
+function TimelineManager({ clients }) {
+  const [clientName, setClientName] = useState(clients[0]?.name || '');
+  const [adding, setAdding] = useState(false);
+  const blank = () => ({ type: 'post', title: '', body: '', eventDate: new Date().toISOString().slice(0,10),
+    platform: '', linkUrl: '', metricLeads: '', metricReach: '', metricClicks: '', metricSpend: '', visible: 1 });
+  const [form, setForm] = useState(blank());
+  const [nonce, setNonce] = useState(0);
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const save = async () => {
+    if (!form.title.trim()) return alert('חסרה כותרת');
+    try {
+      await api('timeline', { method: 'POST', body: { ...form, clientName } });
+      setForm(blank()); setAdding(false); setNonce(n => n + 1);
+    } catch (e) { alert(e.message); }
+  };
+
+  const isCampaign = form.type === 'campaign';
+
+  return html`
+    <div class="px-4 sm:px-5 pb-24 sm:pb-10">
+      <div class="flex items-center gap-2 mb-4 flex-wrap">
+        <select class=${`${inputCls} !w-56`} value=${clientName} onChange=${e => setClientName(e.target.value)}>
+          ${clients.map(c => html`<option key=${c.id} value=${c.name}>${c.name}</option>`)}
+        </select>
+        <${Btn} onClick=${() => { setForm(blank()); setAdding(a => !a); }}>
+          ${adding ? 'ביטול' : '+ הוספת פעילות'}
+        <//>
+      </div>
+
+      ${adding && html`
+        <div class="bg-white border border-zinc-200 rounded-2xl p-4 mb-5 space-y-3 max-w-2xl">
+          <div class="flex gap-1.5 flex-wrap">
+            ${Object.entries(TL_TYPES).filter(([k]) => k !== 'task' && k !== 'update').map(([k, t]) => html`
+              <button key=${k} onClick=${() => set('type', k)}
+                class=${`flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm border transition ${
+                  form.type === k ? 'bg-brand-lime border-brand-green text-brand-green font-bold'
+                                  : 'border-zinc-200 text-zinc-600'}`}>
+                <${t.icon} size=${14}/> ${t.label}
+              </button>`)}
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <${Field} label="כותרת">
+              <input class=${inputCls} value=${form.title} autoFocus
+                     placeholder=${isCampaign ? 'קמפיין לידים - אוגוסט' : 'שם הפוסט'}
+                     onChange=${e => set('title', e.target.value)} />
+            <//>
+            <${Field} label="תאריך">
+              <input type="date" class=${inputCls} value=${form.eventDate}
+                     onChange=${e => set('eventDate', e.target.value)} />
+            <//>
+          </div>
+
+          <${Field} label="תיאור">
+            <textarea class=${`${inputCls} min-h-[60px]`} value=${form.body}
+                      onChange=${e => set('body', e.target.value)}></textarea>
+          <//>
+
+          <div class="grid grid-cols-2 gap-3">
+            <${Field} label="פלטפורמה">
+              <select class=${inputCls} value=${form.platform} onChange=${e => set('platform', e.target.value)}>
+                <option value="">—</option>
+                <option value="facebook">פייסבוק</option>
+                <option value="instagram">אינסטגרם</option>
+                <option value="google">גוגל</option>
+                <option value="tiktok">טיקטוק</option>
+              </select>
+            <//>
+            <${Field} label="קישור">
+              <input class=${inputCls} dir="ltr" value=${form.linkUrl} placeholder="https://..."
+                     onChange=${e => set('linkUrl', e.target.value)} />
+            <//>
+          </div>
+
+          ${isCampaign && html`
+            <div class="bg-zinc-50 rounded-xl p-3">
+              <div class="text-xs font-bold text-zinc-500 mb-2 flex items-center gap-1.5">
+                <${Target} size=${13}/> נתוני קמפיין
+                <span class="mr-auto font-normal text-[10px] text-zinc-400">
+                  ידני · יתמלא אוטומטית כשנחבר את Meta
+                </span>
+              </div>
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <${Field} label="לידים">
+                  <input type="number" class=${inputCls} value=${form.metricLeads}
+                         onChange=${e => set('metricLeads', e.target.value)} />
+                <//>
+                <${Field} label="חשיפות">
+                  <input type="number" class=${inputCls} value=${form.metricReach}
+                         onChange=${e => set('metricReach', e.target.value)} />
+                <//>
+                <${Field} label="קליקים">
+                  <input type="number" class=${inputCls} value=${form.metricClicks}
+                         onChange=${e => set('metricClicks', e.target.value)} />
+                <//>
+                <${Field} label="עלות (₪)">
+                  <input type="number" step="0.01" class=${inputCls} value=${form.metricSpend}
+                         onChange=${e => set('metricSpend', e.target.value)} />
+                <//>
+              </div>
+            </div>`}
+
+          <label class="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" class="accent-brand-green w-4 h-4" checked=${!!form.visible}
+                   onChange=${e => set('visible', e.target.checked ? 1 : 0)} />
+            הצג ללקוח
+          </label>
+
+          <${Btn} className="w-full" onClick=${save}>הוספה לטיימליין<//>
+        </div>`}
+
+      <${Timeline} key=${clientName + nonce} clientName=${clientName} isClient=${false}
+                   clients=${clients} onManage=${() => setAdding(true)} />
+    </div>`;
+}
+
 /* ============ App ============ */
 function App() {
   const [me, setMe] = useState(null);
   const [booting, setBooting] = useState(true);
   const [data, setData] = useState({ tasks: [], users: [], clients: [], counts: {} });
-  const [view, setView] = useState('board');     // board | late | mine | team | clients
+  const [view, setView] = useState('board');     // board | timeline | late | mine | team | clients | settings
   const [q, setQ] = useState('');
   const [fClient, setFClient] = useState('');
   const [fUser, setFUser] = useState('');
@@ -1287,7 +1822,7 @@ function App() {
     (async () => {
       try {
         const u = await api('me');
-        if (!u.guest) { setMe(u); await load(); }
+        if (!u.guest) { setMe(u); if (u.role === 'client') setView('timeline'); await load(); }
       } catch {}
       setBooting(false);
     })();
@@ -1302,7 +1837,11 @@ function App() {
     return () => { clearInterval(timer.current); window.removeEventListener('focus', tick); };
   }, [me, load]);
 
-  const afterLogin = async (u) => { setMe(u); setBooting(true); await load(); setBooting(false); };
+  const afterLogin = async (u) => {
+    setMe(u);
+    if (u.role === 'client') setView('timeline');   // הלקוח נוחת על הטיימליין שלו
+    setBooting(true); await load(); setBooting(false);
+  };
 
   const logout = async () => { await api('logout', { method: 'POST' }); setMe(null); };
 
@@ -1333,6 +1872,9 @@ function App() {
       <div style=${{ color: '#6b7280' }}>טוען את המערכת...</div></div>`;
 
   if (!me) return html`<${Login} onLogin=${afterLogin} />`;
+
+  // לקוח נעול על הטיימליין בלבד — הגנה גם אם הגיע ל-view אחר
+  const effView = (me.role === 'client') ? 'timeline' : view;
 
   const late = data.tasks.filter(isLate);
   const filtered = data.tasks.filter(t =>
@@ -1387,9 +1929,13 @@ function App() {
               onClick=${() => setView('late')}>הצג<//>
     </div>`;
 
-  const screen = view === 'team'     ? html`<${TeamScreen} users=${data.users} onChange=${load} />`
-               : view === 'clients'  ? html`<${ClientsScreen} clients=${data.clients} onChange=${load} />`
-               : view === 'settings' ? html`<${SettingsScreen} />`
+  const screen = effView === 'team'     ? html`<${TeamScreen} users=${data.users} onChange=${load} />`
+               : effView === 'clients'  ? html`<${ClientsScreen} clients=${data.clients} onChange=${load} />`
+               : effView === 'settings' ? html`<${SettingsScreen} />`
+               : effView === 'timeline' ? (isAdmin
+                    ? html`<${TimelineManager} clients=${data.clients} />`
+                    : html`<${Timeline} clientName=${me.businessName} isClient=${true}
+                                        clients=${data.clients} />`)
                : html`<${Board} tasks=${filtered} users=${data.users} clients=${data.clients}
                                 counts=${data.counts} canEdit=${isAdmin} mobile=${mobile}
                                 onOpen=${setOpen} onMove=${move} onQuickMove=${setMoveTask} />`;
@@ -1399,11 +1945,12 @@ function App() {
       onOpenTask=${id => { const t = data.tasks.find(x => x.id === id); if (t) setOpen(t); }}
       onSeen=${async () => { await api('updates', { method: 'POST' }); setFeed(f => ({ ...f, unread: 0 })); }} />`;
 
-  const title = view === 'team'     ? 'ניהול צוות ומשתמשים'
-              : view === 'settings' ? 'הגדרות'
-              : view === 'clients'  ? 'לקוחות'
-              : view === 'late'     ? 'משימות באיחור'
-              : view === 'mine'     ? 'המשימות שלי'
+  const title = effView === 'team'     ? 'ניהול צוות ומשתמשים'
+              : effView === 'settings' ? 'הגדרות'
+              : effView === 'clients'  ? 'לקוחות'
+              : effView === 'timeline' ? (isAdmin ? 'טיימליין לקוחות' : 'הפעילות שלי')
+              : effView === 'late'     ? 'משימות באיחור'
+              : effView === 'mine'     ? 'המשימות שלי'
               : 'לוח משימות';
 
   const drawers = html`
@@ -1445,7 +1992,7 @@ function App() {
           </div>
         </div>
 
-        ${['board','late','mine'].includes(view) && html`
+        ${isAdmin && ['board','late','mine'].includes(effView) && html`
           <div class="flex items-center gap-2 px-4 pb-2.5">
             <div class="relative flex-1">
               <${Search} size=${15} class="absolute top-2.5 start-3 text-zinc-400" />
@@ -1486,7 +2033,7 @@ function App() {
 
       <div class="px-4 pt-4 pb-3 flex items-center gap-2">
         <b class="text-base">${title}</b>
-        ${['board','late','mine'].includes(view) && html`
+        ${isAdmin && ['board','late','mine'].includes(effView) && html`
           <span class="text-xs text-zinc-400">${filtered.length} משימות</span>`}
       </div>
 
@@ -1494,18 +2041,18 @@ function App() {
 
       <nav class="fixed bottom-0 inset-x-0 bg-white border-t border-zinc-200 flex z-30
                   pb-[env(safe-area-inset-bottom)]">
-        <${TabItem} id="board" icon=${html`<${LayoutGrid} size=${20} />`} label="לוח" />
-        ${isAdmin && html`
-          <${TabItem} id="late" icon=${html`<${Clock} size=${20} />`} label="באיחור" badge=${late.length} />
-          <${TabItem} id="mine" icon=${html`<${User} size=${20} />`} label="שלי" />
-          <${TabItem} id="clients" icon=${html`<${Building2} size=${20} />`} label="לקוחות" />
-          <${TabItem} id="team" icon=${html`<${Users} size=${20} />`} label="צוות" />
-          <${TabItem} id="settings" icon=${html`<${Settings} size=${20} />`} label="הגדרות" />`}
         ${!isAdmin && html`
+          <${TabItem} id="timeline" icon=${html`<${Activity} size=${20} />`} label="הפעילות שלי" />
           <button onClick=${logout}
             class="flex-1 flex flex-col items-center gap-0.5 py-2 text-zinc-400">
             <${LogOut} size=${20} /><span class="text-[10px]">יציאה</span>
           </button>`}
+        ${isAdmin && html`
+          <${TabItem} id="board" icon=${html`<${LayoutGrid} size=${20} />`} label="לוח" />
+          <${TabItem} id="late" icon=${html`<${Clock} size=${20} />`} label="באיחור" badge=${late.length} />
+          <${TabItem} id="timeline" icon=${html`<${Activity} size=${20} />`} label="טיימליין" />
+          <${TabItem} id="clients" icon=${html`<${Building2} size=${20} />`} label="לקוחות" />
+          <${TabItem} id="team" icon=${html`<${Users} size=${20} />`} label="צוות" />`}
       </nav>
 
       ${drawers}
@@ -1529,6 +2076,7 @@ function App() {
         ${isAdmin && html`
           <nav>
             <div class="text-[11px] text-zinc-400 px-3 pb-2">ניהול</div>
+            <${NavItem} id="timeline" icon=${html`<${Activity} size=${17} />`}  label="טיימליין" />
             <${NavItem} id="clients"  icon=${html`<${Building2} size=${17} />`} label="לקוחות" />
             <${NavItem} id="team"     icon=${html`<${Users} size=${17} />`}     label="צוות" />
             <${NavItem} id="settings" icon=${html`<${Settings} size=${17} />`}  label="הגדרות" />
@@ -1560,7 +2108,7 @@ function App() {
               <${Plus} size=${16} class="inline -mt-0.5 ml-1" /> משימה חדשה
             <//>`}
 
-          ${['board','late','mine'].includes(view) && html`
+          ${isAdmin && ['board','late','mine'].includes(effView) && html`
             <div class="relative">
               <${Search} size=${15} class="absolute top-2.5 start-3 text-zinc-400" />
               <input class=${`${inputCls} ps-9 !w-56`} placeholder="חיפוש משימה…"
@@ -1588,7 +2136,7 @@ function App() {
 
         <div class="flex items-center gap-2 px-5 pt-5 pb-3 font-bold text-lg">
           ${title}
-          ${['board','late','mine'].includes(view) && html`
+          ${isAdmin && ['board','late','mine'].includes(effView) && html`
             <span class="text-xs font-normal text-zinc-400">${filtered.length} משימות</span>`}
         </div>
 

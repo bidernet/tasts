@@ -1,6 +1,6 @@
 # בידרנט · מערכת משימות ועדכונים
 
-**גרסה 1.0.3** · `tasks.bidernet.co.il`
+**גרסה 1.1.0** · `tasks.bidernet.co.il`
 
 מערכת ניהול משימות פנימית לצוות משרד הפרסום: לוח קנבן, עדכוני צוות, קבצים, הרשאות לקוחות, והתראות וואטסאפ.
 
@@ -131,7 +131,37 @@ favicon.ico, icon-*.png, apple-touch-icon.png
 
 ---
 
-## 7. מייל
+## 7. תזכורות אוטומטיות (Cron)
+
+התזכורות נשלחות על ידי `cron.php`, שהשרת מריץ בלוח זמנים קבוע.
+
+**cPanel → Cron Jobs → Add New Cron Job:**
+
+```
+Common Settings:  Every 5 minutes
+Command:          /usr/local/bin/php /home/USER/public_html/tasks.bidernet.co.il/cron.php
+```
+
+(החלף `USER` בשם המשתמש שלך בשרת. את הנתיב המדויק ל-PHP אפשר לקבל מחברת האחסון.)
+
+**בלמים מובנים נגד חסימת מספר הוואטסאפ:**
+
+| | |
+|---|---|
+| מקסימום בהרצה אחת | 5 הודעות |
+| תקרה יומית | 60 הודעות |
+| מרווח בין הודעות | 8 שניות |
+| עצירה אוטומטית | ברגע שהמשימה סומנה "בוצע" |
+| מקסימום חזרות לתזכורת | 20 |
+
+הערכים בראש `cron.php` (`MAX_PER_RUN`, `MAX_PER_DAY`, `GAP_SECONDS`).
+
+**בדיקה ידנית:** `https://tasks.bidernet.co.il/cron.php?key=<CRON_KEY>`
+(המפתח נמצא ב-`config.php` — **החלף אותו למחרוזת אקראית משלך**.)
+
+---
+
+## 8. מייל
 
 שחזור סיסמה משתמש ב-`mail()` של PHP. בראש `api.php`:
 
@@ -144,7 +174,7 @@ $MAIL_FROM = 'no-reply@bidernet.co.il';
 
 ---
 
-## 8. עדכון גרסה
+## 9. עדכון גרסה
 
 מספר הגרסה מופיע ב-3 מקומות: `VERSION`, `api.php` (`APP_VERSION`), `app.js` (`APP_VERSION`), ומוצג בתחתית סרגל הצד.
 

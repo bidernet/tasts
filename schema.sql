@@ -37,6 +37,12 @@ CREATE TABLE IF NOT EXISTS `clients` (
   `phone`     VARCHAR(30)  NULL,
   `waGroupId` VARCHAR(100) NULL,
   `logoPath`  VARCHAR(500) NULL,
+  `metaPageId`     VARCHAR(50)  NULL COMMENT 'מזהה הדף העסקי',
+  `metaPageName`   VARCHAR(200) NULL,
+  `metaAdAccount`  VARCHAR(50)  NULL COMMENT 'act_XXXX',
+  `metaToken`      TEXT NULL         COMMENT 'Page access token (long-lived)',
+  `metaTokenExp`   DATETIME NULL     COMMENT 'מתי הטוקן פג',
+  `metaConnectedAt` DATETIME NULL,
   `active`    TINYINT(1)   DEFAULT 1,
   `createdAt` DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -149,6 +155,50 @@ CREATE TABLE IF NOT EXISTS `password_resets` (
   `usedAt`    DATETIME NULL,
   `createdAt` DATETIME DEFAULT CURRENT_TIMESTAMP,
   INDEX `idx_reset_user` (`username`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `reminders` (
+  `id`          VARCHAR(50) PRIMARY KEY,
+  `taskId`      VARCHAR(50) NOT NULL,
+  `target`      VARCHAR(20) NOT NULL DEFAULT 'staff'  COMMENT 'staff | phone | group',
+  `message`     TEXT NULL        COMMENT 'ריק = תבנית ברירת המחדל',
+  `nextRunAt`   DATETIME NOT NULL,
+  `repeatEvery` INT DEFAULT 0    COMMENT 'שעות בין חזרות. 0 = חד-פעמי',
+  `repeatTimes` INT DEFAULT 1    COMMENT 'כמה פעמים בסך הכל',
+  `sentCount`   INT DEFAULT 0,
+  `lastSentAt`  DATETIME NULL,
+  `active`      TINYINT(1) DEFAULT 1,
+  `createdBy`   VARCHAR(200) NULL,
+  `createdAt`   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_rem_task` (`taskId`),
+  INDEX `idx_rem_next` (`nextRunAt`, `active`),
+  CONSTRAINT `fk_rem_task` FOREIGN KEY (`taskId`) REFERENCES `tasks`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `timeline` (
+  `id`          VARCHAR(50) PRIMARY KEY,
+  `clientName`  VARCHAR(200) NOT NULL,
+  `type`        VARCHAR(30) NOT NULL   COMMENT 'post | campaign | task | update | note',
+  `title`       VARCHAR(500) NOT NULL,
+  `body`        LONGTEXT NULL,
+  `eventDate`   DATE NOT NULL,
+  -- נתוני קמפיין (ריק לסוגים אחרים)
+  `metricLeads`       INT NULL,
+  `metricReach`       INT NULL,
+  `metricClicks`      INT NULL,
+  `metricSpend`       DECIMAL(10,2) NULL COMMENT 'עלות בש"ח',
+  `platform`    VARCHAR(50) NULL       COMMENT 'facebook | instagram | google...',
+  `linkUrl`     VARCHAR(1000) NULL     COMMENT 'קישור לפוסט',
+  `mediaPath`   VARCHAR(500) NULL,
+  `source`      VARCHAR(20) DEFAULT 'manual' COMMENT 'manual | auto | meta',
+  `refId`       VARCHAR(100) NULL      COMMENT 'מזהה מקור (task.id / meta object id) — למניעת כפילות',
+  `visible`     TINYINT(1) DEFAULT 1   COMMENT 'האם הלקוח רואה',
+  `createdBy`   VARCHAR(200) NULL,
+  `createdAt`   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  `updatedAt`   DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX `idx_tl_client` (`clientName`, `eventDate`),
+  INDEX `idx_tl_type`   (`type`),
+  UNIQUE KEY `uq_tl_ref` (`refId`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================

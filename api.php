@@ -15,7 +15,9 @@ $APP_URL   = 'https://tasks.bidernet.co.il';
 $MAIL_FROM = 'no-reply@bidernet.co.il';
 
 // עוגיית הסשן: קיימת רק בשרת, לא נגישה ל-JS
-define('APP_VERSION', '1.0.8');
+define('APP_VERSION', '1.3.1');
+date_default_timezone_set('Asia/Jerusalem');
+require_once __DIR__ . '/lib_wa.php';
 
 session_set_cookie_params([
     'lifetime' => 0,
@@ -101,7 +103,13 @@ function autoMigrate($pdo) {
         'users'         => ['phone' => 'VARCHAR(30) NULL'],
         'clients'       => ['phone' => 'VARCHAR(30) NULL',
                             'waGroupId' => 'VARCHAR(100) NULL',
-                            'logoPath' => 'VARCHAR(500) NULL'],
+                            'logoPath' => 'VARCHAR(500) NULL',
+                            'metaPageId' => 'VARCHAR(50) NULL',
+                            'metaPageName' => 'VARCHAR(200) NULL',
+                            'metaAdAccount' => 'VARCHAR(50) NULL',
+                            'metaToken' => 'TEXT NULL',
+                            'metaTokenExp' => 'DATETIME NULL',
+                            'metaConnectedAt' => 'DATETIME NULL'],
         'task_comments' => ['internal' => 'TINYINT(1) DEFAULT 1',
                             'editedAt' => 'DATETIME NULL'],
         'settings'      => ['waStaffTemplate' => 'TEXT NULL'],
@@ -122,6 +130,38 @@ function autoMigrate($pdo) {
             }
         }
     }
+    // טבלאות שנוספו בגרסאות חדשות
+    $pdo->exec("CREATE TABLE IF NOT EXISTS `reminders` (
+      `id`          VARCHAR(50) PRIMARY KEY,
+      `taskId`      VARCHAR(50) NOT NULL,
+      `target`      VARCHAR(20) NOT NULL DEFAULT 'staff',
+      `message`     TEXT NULL,
+      `nextRunAt`   DATETIME NOT NULL,
+      `repeatEvery` INT DEFAULT 0,
+      `repeatTimes` INT DEFAULT 1,
+      `sentCount`   INT DEFAULT 0,
+      `lastSentAt`  DATETIME NULL,
+      `active`      TINYINT(1) DEFAULT 1,
+      `createdBy`   VARCHAR(200) NULL,
+      `createdAt`   DATETIME DEFAULT CURRENT_TIMESTAMP,
+      INDEX `idx_rem_task` (`taskId`),
+      INDEX `idx_rem_next` (`nextRunAt`, `active`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS `timeline` (
+      `id` VARCHAR(50) PRIMARY KEY, `clientName` VARCHAR(200) NOT NULL,
+      `type` VARCHAR(30) NOT NULL, `title` VARCHAR(500) NOT NULL, `body` LONGTEXT NULL,
+      `eventDate` DATE NOT NULL, `metricLeads` INT NULL, `metricReach` INT NULL,
+      `metricClicks` INT NULL, `metricSpend` DECIMAL(10,2) NULL, `platform` VARCHAR(50) NULL,
+      `linkUrl` VARCHAR(1000) NULL, `mediaPath` VARCHAR(500) NULL,
+      `source` VARCHAR(20) DEFAULT 'manual', `refId` VARCHAR(100) NULL,
+      `visible` TINYINT(1) DEFAULT 1, `createdBy` VARCHAR(200) NULL,
+      `createdAt` DATETIME DEFAULT CURRENT_TIMESTAMP,
+      `updatedAt` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX `idx_tl_client` (`clientName`, `eventDate`), INDEX `idx_tl_type` (`type`),
+      UNIQUE KEY `uq_tl_ref` (`refId`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
     $_SESSION['schema_ok'] = true;
 }
 autoMigrate($pdo);
@@ -165,6 +205,17 @@ function normalizePhone($raw, $cc = '972') {
     if (str_starts_with($d, '0'))   $d = $cc . substr($d, 1);    // 052...   → 97252...
     elseif (!str_starts_with($d, $cc) && strlen($d) <= 9) $d = $cc . $d;  // 52...  → 97252...
     return $d;
+}
+
+function timelineAuto($pdo, $clientName, $type, $title, $eventDate, $refId, $body = null) {
+    if (!$clientName) return;   // בלי לקוח אין טיימליין
+    try {
+        $pdo->prepare("INSERT INTO timeline (id, clientName, type, title, body, eventDate, source, refId, visible, createdBy)
+                       VALUES (?,?,?,?,?,?, 'auto', ?, 1, 'מערכת')
+                       ON DUPLICATE KEY UPDATE title=VALUES(title), eventDate=VALUES(eventDate)")
+            ->execute(['tl_' . bin2hex(random_bytes(6)), $clientName, $type, $title, $body,
+                       $eventDate, $refId]);
+    } catch (Throwable $e) { error_log('[timeline] ' . $e->getMessage()); }
 }
 
 function logActivity($pdo, $taskId, $actorName, $field, $old, $new) {
@@ -388,7 +439,7 @@ try {
         requireLogin();
 
         if ($method === 'GET') {
-            respond($pdo->query("SELECT * FROM clients WHERE active = 1 ORDER BY name")->fetchAll());
+            respond($pdo->query("SELECT id, name, color, contact, phone, waGroupId, logoPath, metaPageId, metaPageName, metaAdAccount, metaConnectedAt, active, createdAt FROM clients WHERE active = 1 ORDER BY name")->fetchAll());
         }
         if ($method === 'POST') {
             requireAdmin();
@@ -494,6 +545,11 @@ try {
                         logActivity($pdo, $id, $u['name'], $f, $before[$f], $fields[$f]);
                     }
                 }
+                // משימה שהושלמה → אירוע בטיימליין הלקוח
+                if ($before['status'] !== 'done' && $fields['status'] === 'done') {
+                    timelineAuto($pdo, $fields['clientName'], 'task',
+                        $fields['title'], date('Y-m-d'), 'task_' . $id);
+                }
                 respond(['ok' => true, 'id' => $id]);
             }
 
@@ -537,6 +593,12 @@ try {
         if ($before !== $status) {
             $pdo->prepare("UPDATE tasks SET status = ? WHERE id = ?")->execute([$status, $id]);
             logActivity($pdo, $id, $u['name'], 'status', $before, $status);
+            if ($status === 'done') {
+                $t = $pdo->prepare("SELECT title, clientName FROM tasks WHERE id = ?");
+                $t->execute([$id]);
+                $row = $t->fetch();
+                timelineAuto($pdo, $row['clientName'], 'task', $row['title'], date('Y-m-d'), 'task_' . $id);
+            }
         }
         respond(['ok' => true]);
 
@@ -585,6 +647,14 @@ try {
             $pdo->prepare("INSERT INTO task_comments (id, taskId, senderUsername, senderName, message, internal)
                            VALUES (?,?,?,?,?,?)")
                 ->execute([$id, $taskId, $u['username'], $u['name'], $message, $internal]);
+            // עדכון גלוי ללקוח → טיימליין
+            if ($internal == 0) {
+                $t = $pdo->prepare("SELECT clientName FROM tasks WHERE id = ?");
+                $t->execute([$taskId]);
+                $cn = $t->fetchColumn();
+                timelineAuto($pdo, $cn, 'update', mb_substr($message, 0, 200),
+                    date('Y-m-d'), 'comment_' . $id);
+            }
             $pdo->prepare("UPDATE tasks SET updatedAt = NOW() WHERE id = ?")->execute([$taskId]);
             respond(['ok' => true, 'id' => $id]);
         }
@@ -693,7 +763,7 @@ try {
         respond([
             'tasks'   => $tasks,
             'counts'  => $counts,
-            'clients' => $pdo->query("SELECT * FROM clients WHERE active = 1 ORDER BY name")->fetchAll(),
+            'clients' => $pdo->query("SELECT id, name, color, contact, phone, waGroupId, logoPath, metaPageId, metaPageName, metaAdAccount, metaConnectedAt, active, createdAt FROM clients WHERE active = 1 ORDER BY name")->fetchAll(),
             'users'   => $pdo->query("SELECT id, username, name, email, phone, role, jobTitle, color, businessName
                                       FROM users WHERE active = 1 ORDER BY name")->fetchAll(),
             'stamp'   => date('c'),
@@ -808,12 +878,32 @@ try {
         curl_close($ch);
 
         $ok = !$cErr && $code >= 200 && $code < 300;
+
+        // הסבר קריא מתוך גוף התשובה של הספק, במקום "HTTP 466" סתום
+        $detail = $cErr ?: (string)$res;
+        $parsed = json_decode((string)$res, true);
+        if (is_array($parsed)) {
+            $desc = $parsed['invokeStatus']['description']
+                 ?? $parsed['correspondentsStatus']['description']
+                 ?? $parsed['message']
+                 ?? $parsed['error']
+                 ?? null;
+            if ($desc) $detail = $desc;
+        }
+
         $pdo->prepare("INSERT INTO notifications (id, taskId, clientName, target, channel, message, status, response, sentBy)
                        VALUES (?,?,?,?,?,?,?,?,?)")
             ->execute([nid('n_'), $taskId, $task['clientName'], $to, $channel, $message,
-                       $ok ? 'sent' : 'failed', mb_substr($cErr ?: (string)$res, 0, 1000), $u['name']]);
+                       $ok ? 'sent' : 'failed',
+                       mb_substr(($ok ? '' : "HTTP $code · ") . $detail, 0, 1500), $u['name']]);
 
-        if (!$ok) fail('השליחה נכשלה: ' . ($cErr ?: "HTTP $code"), 502);
+        if (!$ok) {
+            $hint = '';
+            if ($code === 466) $hint = ' — מגבלת תוכנית ב-Green API. בדוק בקונסול שהאינסטנס הזה משויך לתוכנית בתשלום.';
+            if ($code === 401 || $code === 403) $hint = ' — הטוקן או ה-Instance ID שגויים, או שהאינסטנס נותק.';
+            if ($code === 400) $hint = ' — היעד לא תקין (מספר או מזהה קבוצה).';
+            fail("השליחה נכשלה (HTTP $code): " . mb_substr($detail, 0, 400) . $hint, 502);
+        }
 
         $label = $channel === 'group' ? 'נשלח לקבוצת הלקוח'
                : ($channel === 'staff' ? 'נשלחה התראה לעובד' : 'נשלח ללקוח');
@@ -920,6 +1010,288 @@ try {
         }
         usort($groups, fn($a, $b) => strcmp($a['name'], $b['name']));
         respond(['groups' => $groups]);
+
+    // ---------- Meta: התחלת חיבור (OAuth) ----------
+    case 'meta_connect':
+        $u = requireAdmin();
+        $client = $_GET['clientName'] ?? '';
+        if (!$client) fail('חסר שם לקוח');
+        // state נושא את הלקוח + חתימה, כדי למנוע זיוף
+        $state = base64_encode(json_encode([
+            'c' => $client,
+            'n' => bin2hex(random_bytes(8)),
+            's' => hash_hmac('sha256', $client, $META_APP_SECRET),
+        ]));
+        $_SESSION['meta_state'] = $state;
+
+        // Login for Business: מעבירים config_id (ההרשאות מוגדרות בתוך ה-Configuration עצמו)
+        $params = [
+            'client_id'     => $META_APP_ID,
+            'redirect_uri'  => $META_REDIRECT,
+            'state'         => $state,
+            'response_type' => 'code',
+        ];
+        if (!empty($META_CONFIG_ID)) {
+            $params['config_id'] = $META_CONFIG_ID;   // ההרשאות מגיעות מה-Configuration
+        } else {
+            $params['scope'] = 'pages_show_list,leads_retrieval,ads_read,pages_read_engagement,business_management';
+        }
+        $url = 'https://www.facebook.com/v21.0/dialog/oauth?' . http_build_query($params);
+        respond(['url' => $url]);
+
+    // ---------- Meta: חזרה מפייסבוק ----------
+    case 'meta_callback':
+        // זה נפתח בדפדפן ישירות מ-Facebook — מחזיר HTML, לא JSON
+        header('Content-Type: text/html; charset=utf-8');
+        $code  = $_GET['code'] ?? '';
+        $state = $_GET['state'] ?? '';
+        $err   = $_GET['error_description'] ?? ($_GET['error'] ?? '');
+
+        $close = function ($msg, $ok = false) {
+            $color = $ok ? '#10b981' : '#e11d48';
+            echo "<!doctype html><html dir=rtl><head><meta charset=utf-8></head>
+                  <body style='font-family:sans-serif;text-align:center;padding:40px'>
+                  <div style='font-size:48px'>" . ($ok ? '✅' : '⚠️') . "</div>
+                  <h2 style='color:$color'>" . htmlspecialchars($msg) . "</h2>
+                  <p>אפשר לסגור את החלון ולחזור למערכת.</p>
+                  <script>setTimeout(()=>{window.opener&&window.opener.postMessage('meta_done','*');window.close();},1500)</script>
+                  </body></html>";
+            exit;
+        };
+
+        if ($err) $close('החיבור בוטל: ' . $err);
+        if (!$code || !$state) $close('חסרים פרטי חיבור מפייסבוק');
+        if (($_SESSION['meta_state'] ?? '') !== $state) $close('אימות נכשל — נסה שוב');
+
+        $data = json_decode(base64_decode($state), true);
+        $client = $data['c'] ?? '';
+        if (hash_hmac('sha256', $client, $META_APP_SECRET) !== ($data['s'] ?? '')) {
+            $close('אימות הלקוח נכשל');
+        }
+
+        try {
+            // 1. code → short token → long-lived token
+            $tok = meta_getToken($META_APP_ID, $META_APP_SECRET, $META_REDIRECT, $code);
+            if (empty($tok['access_token'])) $close('פייסבוק לא החזירה טוקן');
+            $long = meta_extendToken($META_APP_ID, $META_APP_SECRET, $tok['access_token']);
+            $userToken = $long['access_token'] ?? $tok['access_token'];
+            $expSec    = $long['expires_in'] ?? 5184000;   // ~60 יום
+
+            // 2. שמירת הטוקן זמנית — בחירת הדף תתבצע בצעד הבא
+            $_SESSION['meta_pending'] = ['client' => $client, 'userToken' => $userToken,
+                                         'exp' => date('Y-m-d H:i:s', time() + $expSec)];
+            $close('פייסבוק חובר! חוזרים למערכת לבחירת הדף…', true);
+        } catch (Throwable $e) {
+            error_log('[meta] ' . $e->getMessage());
+            $close('שגיאה בחיבור: ' . $e->getMessage());
+        }
+
+    // ---------- Meta: רשימת הדפים הזמינים אחרי החיבור ----------
+    case 'meta_pages':
+        requireAdmin();
+        $p = $_SESSION['meta_pending'] ?? null;
+        if (!$p) fail('אין חיבור פעיל — התחל מחדש', 400);
+        $pages = meta_getPages($p['userToken']);
+        respond(['client' => $p['client'], 'pages' => $pages]);
+
+    // ---------- Meta: שמירת הדף שנבחר ----------
+    case 'meta_save_page':
+        $u = requireAdmin();
+        if ($method !== 'POST') fail('Method not allowed', 405);
+        $p = $_SESSION['meta_pending'] ?? null;
+        if (!$p) fail('אין חיבור פעיל', 400);
+
+        $pageId   = $input['pageId'] ?? '';
+        $pageName = $input['pageName'] ?? '';
+        $adAcct   = $input['adAccount'] ?? '';
+        $pageToken= $input['pageToken'] ?? '';   // הגיע מרשימת הדפים
+        if (!$pageId || !$pageToken) fail('חסר דף');
+
+        $pdo->prepare("UPDATE clients SET metaPageId=?, metaPageName=?, metaAdAccount=?,
+                       metaToken=?, metaTokenExp=?, metaConnectedAt=NOW() WHERE name=?")
+            ->execute([$pageId, $pageName, $adAcct ?: null, $pageToken, $p['exp'], $p['client']]);
+
+        unset($_SESSION['meta_pending'], $_SESSION['meta_state']);
+        respond(['ok' => true]);
+
+    // ---------- Meta: ניתוק ----------
+    case 'meta_disconnect':
+        requireAdmin();
+        if ($method !== 'POST') fail('Method not allowed', 405);
+        $client = $input['clientName'] ?? '';
+        $pdo->prepare("UPDATE clients SET metaPageId=NULL, metaPageName=NULL, metaAdAccount=NULL,
+                       metaToken=NULL, metaTokenExp=NULL, metaConnectedAt=NULL WHERE name=?")
+            ->execute([$client]);
+        respond(['ok' => true]);
+
+    // ---------- טיימליין לקוח ----------
+    case 'timeline':
+        $u = requireLogin();
+
+        if ($method === 'GET') {
+            // לקוח רואה רק את שלו, ורק אירועים גלויים
+            if ($u['role'] === 'client') {
+                $client = $u['businessName'];
+                $q = $pdo->prepare("SELECT * FROM timeline
+                                    WHERE clientName = ? AND visible = 1
+                                    ORDER BY eventDate DESC, createdAt DESC");
+                $q->execute([$client]);
+                $rows = $q->fetchAll();
+
+                // משימות פעילות (לא-בוצעו) שסומנו גלויות ללקוח → כרטיסי "מצב" חיים בטיימליין
+                $tq = $pdo->prepare("SELECT id, title, status, dueDate, updatedAt, createdAt
+                                     FROM tasks
+                                     WHERE clientName = ? AND visibleToClient = 1 AND status <> 'done'
+                                     ORDER BY updatedAt DESC");
+                $tq->execute([$client]);
+                foreach ($tq->fetchAll() as $t) {
+                    $rows[] = [
+                        'id'        => 'live_' . $t['id'],
+                        'clientName'=> $client,
+                        'type'      => 'status',
+                        'title'     => $t['title'],
+                        'body'      => null,
+                        'eventDate' => substr($t['updatedAt'] ?: $t['createdAt'], 0, 10),
+                        'status'    => $t['status'],      // השדה שהפרונט יציג
+                        'dueDate'   => $t['dueDate'],
+                        'source'    => 'live', 'visible' => 1,
+                        'metricLeads'=>null,'metricReach'=>null,'metricClicks'=>null,'metricSpend'=>null,
+                        'platform'=>null,'linkUrl'=>null,'mediaPath'=>null,'body'=>null,
+                    ];
+                }
+                // מיון מחדש אחרי המיזוג
+                usort($rows, fn($a, $b) => strcmp($b['eventDate'], $a['eventDate']));
+
+                $summary = [];
+                foreach ($rows as $r) {
+                    $m = substr($r['eventDate'], 0, 7);
+                    if (!isset($summary[$m])) $summary[$m] = ['leads'=>0,'reach'=>0,'clicks'=>0,'spend'=>0,'events'=>0];
+                    $summary[$m]['leads']  += (int)($r['metricLeads'] ?? 0);
+                    $summary[$m]['reach']  += (int)($r['metricReach'] ?? 0);
+                    $summary[$m]['clicks'] += (int)($r['metricClicks'] ?? 0);
+                    $summary[$m]['spend']  += (float)($r['metricSpend'] ?? 0);
+                    $summary[$m]['events'] += 1;
+                }
+                respond(['events' => $rows, 'summary' => $summary]);
+            }
+
+            // ----- ענף אדמין -----
+            $client = $_GET['clientName'] ?? '';
+            if ($client) {
+                $q = $pdo->prepare("SELECT * FROM timeline WHERE clientName = ?
+                                    ORDER BY eventDate DESC, createdAt DESC");
+                $q->execute([$client]);
+            } else {
+                $q = $pdo->query("SELECT * FROM timeline ORDER BY eventDate DESC, createdAt DESC LIMIT 200");
+            }
+            $rows = $q->fetchAll();
+
+            // סיכום חודשי של נתוני קמפיין
+            $summary = [];
+            foreach ($rows as $r) {
+                $m = substr($r['eventDate'], 0, 7);   // YYYY-MM
+                if (!isset($summary[$m])) $summary[$m] = ['leads'=>0,'reach'=>0,'clicks'=>0,'spend'=>0,'events'=>0];
+                $summary[$m]['leads']  += (int)$r['metricLeads'];
+                $summary[$m]['reach']  += (int)$r['metricReach'];
+                $summary[$m]['clicks'] += (int)$r['metricClicks'];
+                $summary[$m]['spend']  += (float)$r['metricSpend'];
+                $summary[$m]['events'] += 1;
+            }
+            respond(['events' => $rows, 'summary' => $summary]);
+        }
+
+        if ($method === 'POST') {
+            requireAdmin();
+            $id   = $input['id'] ?? nid('tl_');
+            $type = $input['type'] ?? 'note';
+            $client = trim($input['clientName'] ?? '');
+            $title  = trim($input['title'] ?? '');
+            if (!$client) fail('חסר לקוח');
+            if ($title === '') fail('חסרה כותרת');
+            if (!in_array($type, ['post','campaign','task','update','note'], true)) fail('סוג לא תקין');
+
+            $num = fn($k) => ($input[$k] ?? '') === '' ? null : (int)$input[$k];
+            $pdo->prepare("
+                INSERT INTO timeline (id, clientName, type, title, body, eventDate,
+                    metricLeads, metricReach, metricClicks, metricSpend, platform, linkUrl,
+                    source, visible, createdBy)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'manual', ?, ?)
+                ON DUPLICATE KEY UPDATE title=VALUES(title), body=VALUES(body), eventDate=VALUES(eventDate),
+                    metricLeads=VALUES(metricLeads), metricReach=VALUES(metricReach),
+                    metricClicks=VALUES(metricClicks), metricSpend=VALUES(metricSpend),
+                    platform=VALUES(platform), linkUrl=VALUES(linkUrl), visible=VALUES(visible)
+            ")->execute([
+                $id, $client, $type, $title, $input['body'] ?? null,
+                $input['eventDate'] ?: date('Y-m-d'),
+                $num('metricLeads'), $num('metricReach'), $num('metricClicks'),
+                ($input['metricSpend'] ?? '') === '' ? null : (float)$input['metricSpend'],
+                $input['platform'] ?: null, $input['linkUrl'] ?: null,
+                isset($input['visible']) ? (int)!!$input['visible'] : 1,
+                $u['name'],
+            ]);
+            respond(['ok' => true, 'id' => $id]);
+        }
+
+        if ($method === 'DELETE') {
+            requireAdmin();
+            $id = $_GET['id'] ?? '';
+            if (!$id) fail('חסר מזהה');
+            $pdo->prepare("DELETE FROM timeline WHERE id = ?")->execute([$id]);
+            respond(['ok' => true]);
+        }
+        fail('Method not allowed', 405);
+
+    // ---------- תזכורות מתוזמנות ----------
+    case 'reminders':
+        $u = requireAdmin();
+
+        if ($method === 'GET') {
+            $taskId = $_GET['taskId'] ?? '';
+            if ($taskId) {
+                $q = $pdo->prepare("SELECT * FROM reminders WHERE taskId = ? ORDER BY nextRunAt");
+                $q->execute([$taskId]);
+                respond($q->fetchAll());
+            }
+            respond($pdo->query("
+                SELECT r.*, t.title, t.status FROM reminders r
+                JOIN tasks t ON t.id = r.taskId
+                WHERE r.active = 1 ORDER BY r.nextRunAt LIMIT 100")->fetchAll());
+        }
+
+        if ($method === 'POST') {
+            $taskId = $input['taskId'] ?? '';
+            $when   = $input['nextRunAt'] ?? '';     // 'YYYY-MM-DD HH:MM'
+            $target = $input['target'] ?? 'staff';
+            if (!$taskId || !$when) fail('חסרים משימה או מועד');
+            if (!in_array($target, ['staff','phone','group'], true)) fail('יעד לא תקין');
+
+            $ts = strtotime($when);
+            if (!$ts) fail('מועד לא תקין');
+
+            $every = max(0, (int)($input['repeatEvery'] ?? 0));    // שעות
+            $times = max(1, (int)($input['repeatTimes'] ?? 1));
+            if ($every > 0 && $every < 1) fail('מרווח מינימלי בין תזכורות: שעה');
+            if ($times > 20) fail('מקסימום 20 חזרות לתזכורת');
+
+            $id = $input['id'] ?? nid('rm_');
+            $pdo->prepare("
+                INSERT INTO reminders (id, taskId, target, message, nextRunAt, repeatEvery, repeatTimes, createdBy, active)
+                VALUES (?,?,?,?,?,?,?,?,1)
+                ON DUPLICATE KEY UPDATE target=VALUES(target), message=VALUES(message),
+                  nextRunAt=VALUES(nextRunAt), repeatEvery=VALUES(repeatEvery),
+                  repeatTimes=VALUES(repeatTimes), active=1
+            ")->execute([$id, $taskId, $target, ($input['message'] ?? '') ?: null,
+                         date('Y-m-d H:i:s', $ts), $every, $times, $u['name']]);
+            respond(['ok' => true, 'id' => $id]);
+        }
+
+        if ($method === 'DELETE') {
+            $id = $_GET['id'] ?? '';
+            if (!$id) fail('חסר מזהה');
+            $pdo->prepare("DELETE FROM reminders WHERE id = ?")->execute([$id]);
+            respond(['ok' => true]);
+        }
+        fail('Method not allowed', 405);
 
     // ---------- יומן שליחות ----------
     case 'notifications':
